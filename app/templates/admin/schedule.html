@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}לוח {{ month_name }} {{ year }}{% endblock %}
+{% block nav %}
+  <a href="/admin/" class="hover:underline">בקרה</a>
+  <a href="/admin/doctors" class="hover:underline">רופאים</a>
+  <a href="/admin/history" class="hover:underline">היסטוריה</a>
+{% endblock %}
+{% block content %}
+
+{% set DAY_NAMES = ["שני","שלישי","רביעי","חמישי","שישי","שבת","ראשון"] %}
+{% set oncall_doctors = doctors | selectattr("does_oncall") | list %}
+{% set session_doctors = doctors | selectattr("does_sessions") | list %}
+
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-bold">לוח {{ month_name }} {{ year }}</h1>
+  <div class="flex gap-3">
+    {% if status and status.status == 'draft' %}
+    <form action="/admin/schedule/{{ year }}/{{ month }}/publish" method="POST">
+      <button class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">פרסם לוח</button>
+    </form>
+    {% endif %}
+    <a href="/admin/schedule/{{ year }}/{{ month }}/pdf"
+       class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">הורד PDF</a>
+    <form action="/admin/schedule/{{ year }}/{{ month }}/generate" method="POST">
+      <button class="bg-yellow-500 text-white px-4 py-2 rounded-lg hover:bg-yellow-600">צור מחדש</button>
+    </form>
+  </div>
+</div>
+
+{% if status and status.alerts %}
+<div class="bg-red-50 border border-red-200 rounded-xl p-4 mb-6">
+  <p class="font-semibold text-red-700 mb-1">התראות:</p>
+  <ul class="text-red-600 text-sm space-y-1">
+    {% for alert in status.alerts %}
+    <li>• {{ alert }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="bg-white rounded-xl shadow overflow-x-auto">
+  <table class="w-full text-right text-sm">
+    <thead class="bg-gray-100">
+      <tr>
+        <th class="px-3 py-3">תאריך</th>
+        <th class="px-3 py-3">יום</th>
+        <th class="px-3 py-3">כונן</th>
+        <th class="px-3 py-3">ססיה 1</th>
+        <th class="px-3 py-3">ססיה 2</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y">
+      {% for day in days %}
+      {% set date_str = day.strftime('%Y-%m-%d') %}
+      {% set is_holiday = date_str in holiday_set %}
+      {% set is_sess_day = is_session_day(day, holiday_set) %}
+      {% set is_fri_sat = day.weekday() in (4, 5) %}
+
+      {% set oncall_entry = entry_map.get((date_str, 'oncall')) %}
+      {% set sess1_entry = entry_map.get((date_str, 'session1')) %}
+      {% set sess2_entry = entry_map.get((date_str, 'session2')) %}
+
+      <tr class="
+        {% if is_holiday %}bg-orange-50
+        {% elif is_fri_sat %}bg-blue-50
+        {% else %}hover:bg-gray-50{% endif %}
+      ">
+        <td class="px-3 py-2 font-mono">{{ day.strftime('%d/%m') }}</td>
+        <td class="px-3 py-2">
+          {{ DAY_NAMES[day.weekday()] }}
+          {% if is_holiday %}<span class="text-orange-500 text-xs">חג/ערב חג</span>{% endif %}
+        </td>
+
+        <!-- On-call -->
+        <td class="px-3 py-2">
+          <form action="/admin/schedule/{{ year }}/{{ month }}/update" method="POST" class="inline">
+            <input type="hidden" name="date_str" value="{{ date_str }}"/>
+            <input type="hidden" name="entry_type" value="oncall"/>
+            <select name="doctor_id" onchange="this.form.submit()"
+                    class="border rounded px-2 py-1 text-sm bg-white">
+              <option value="">— ריק —</option>
+              {% for doc in oncall_doctors %}
+              <option value="{{ doc.id }}"
+                {% if oncall_entry and oncall_entry.doctor_id == doc.id %}selected{% endif %}>
+                {{ doc.name }}
+              </option>
+              {% endfor %}
+            </select>
+          </form>
+        </td>
+
+        <!-- Session 1 -->
+        <td class="px-3 py-2">
+          {% if is_sess_day %}
+          <form action="/admin/schedule/{{ year }}/{{ month }}/update" method="POST" class="inline">
+            <input type="hidden" name="date_str" value="{{ date_str }}"/>
+            <input type="hidden" name="entry_type" value="session1"/>
+            <select name="doctor_id" onchange="this.form.submit()"
+                    class="border rounded px-2 py-1 text-sm bg-white">
+              <option value="">— ריק —</option>
+              {% for doc in session_doctors %}
+              <option value="{{ doc.id }}"
+                {% if sess1_entry and sess1_entry.doctor_id == doc.id %}selected{% endif %}>
+                {{ doc.name }}
+              </option>
+              {% endfor %}
+            </select>
+          </form>
+          {% else %}
+          <span class="text-gray-300">—</span>
+          {% endif %}
+        </td>
+
+        <!-- Session 2 -->
+        <td class="px-3 py-2">
+          {% if is_sess_day %}
+          <form action="/admin/schedule/{{ year }}/{{ month }}/update" method="POST" class="inline">
+            <input type="hidden" name="date_str" value="{{ date_str }}"/>
+            <input type="hidden" name="entry_type" value="session2"/>
+            <select name="doctor_id" onchange="this.form.submit()"
+                    class="border rounded px-2 py-1 text-sm bg-white">
+              <option value="">— ריק —</option>
+              {% for doc in session_doctors %}
+              <option value="{{ doc.id }}"
+                {% if sess2_entry and sess2_entry.doctor_id == doc.id %}selected{% endif %}>
+                {{ doc.name }}
+              </option>
+              {% endfor %}
+            </select>
+          </form>
+          {% else %}
+          <span class="text-gray-300">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

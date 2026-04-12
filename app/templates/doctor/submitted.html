@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>בקשה נשלחה</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen flex items-center justify-center">
+  <div class="bg-white rounded-2xl shadow-lg p-10 max-w-md text-center">
+    <div class="text-green-500 text-6xl mb-4">✓</div>
+    <h1 class="text-2xl font-bold mb-2">הבקשה נשלחה בהצלחה!</h1>
+    <p class="text-gray-500">
+      {{ doctor.name }}, הבקשה שלך עבור {{ month_name }} {{ year }} התקבלה.
+    </p>
+  </div>
+</body>
+</html>

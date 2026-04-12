@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>בקשת כוננויות — {{ doctor.name }}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <nav class="bg-blue-800 text-white px-6 py-3 shadow">
+    <span class="font-bold text-lg">מצנתרים — הגשת בקשה</span>
+  </nav>
+
+  <main class="max-w-2xl mx-auto px-4 py-8">
+    <h1 class="text-2xl font-bold mb-1">שלום, {{ doctor.name }}</h1>
+    <p class="text-gray-500 mb-6">הגשת בקשה עבור {{ month_name }} {{ year }}</p>
+
+    {% if existing %}
+    <div class="bg-yellow-50 border border-yellow-300 rounded-xl p-3 mb-5 text-yellow-800 text-sm">
+      כבר הגשת בקשה לחודש זה. ניתן לעדכן אותה עד ה-15 לחודש.
+    </div>
+    {% endif %}
+
+    <form action="/doctor/{{ doctor.token }}/submit" method="POST">
+
+      <!-- Desired sessions -->
+      {% if doctor.does_sessions %}
+      <div class="bg-white rounded-xl shadow p-5 mb-6">
+        <label class="block font-semibold mb-2">כמה ססיות אתה מבקש החודש?</label>
+        <input type="number" name="desired_sessions" min="0" max="20"
+               value="{{ existing.desired_sessions if existing else '' }}"
+               class="border rounded-lg px-3 py-2 w-32 text-center text-lg"/>
+      </div>
+      {% endif %}
+
+      <!-- Calendar -->
+      <div class="bg-white rounded-xl shadow p-5 mb-6">
+        <p class="font-semibold mb-1">סמן תאריכים:</p>
+        <div class="flex gap-4 text-sm mb-4">
+          <span class="flex items-center gap-1">
+            <span class="w-5 h-5 rounded bg-green-200 border border-green-400 inline-block"></span> מועדף
+          </span>
+          <span class="flex items-center gap-1">
+            <span class="w-5 h-5 rounded bg-red-200 border border-red-400 inline-block"></span> לא יכול
+          </span>
+        </div>
+
+        <div class="grid grid-cols-7 gap-1 text-center text-xs mb-1">
+          <div class="font-semibold text-gray-500">א'</div>
+          <div class="font-semibold text-gray-500">ב'</div>
+          <div class="font-semibold text-gray-500">ג'</div>
+          <div class="font-semibold text-gray-500">ד'</div>
+          <div class="font-semibold text-gray-500">ה'</div>
+          <div class="font-semibold text-gray-500">ו'</div>
+          <div class="font-semibold text-gray-500">ש'</div>
+        </div>
+
+        {% set existing_preferred = existing.preferred_dates if existing else [] %}
+        {% set existing_unavailable = existing.unavailable_dates if existing else [] %}
+
+        {% set first_day_of_month_weekday = (year ~ '-' ~ '%02d'|format(month) ~ '-01') | strptime('%Y-%m-%d') if False else None %}
+
+        <div id="calendar" class="grid grid-cols-7 gap-1">
+          <!-- Days filled by JS -->
+        </div>
+
+        <!-- Hidden inputs for selected dates -->
+        <div id="preferred-inputs"></div>
+        <div id="unavailable-inputs"></div>
+      </div>
+
+      <button type="submit"
+              class="w-full bg-blue-600 text-white py-3 rounded-xl text-lg font-semibold hover:bg-blue-700">
+        שלח בקשה
+      </button>
+    </form>
+  </main>
+
+<script>
+const year = {{ year }};
+const month = {{ month }};
+const numDays = {{ num_days }};
+const existingPreferred = {{ (existing.preferred_dates | tojson) if existing else '[]' }};
+const existingUnavailable = {{ (existing.unavailable_dates | tojson) if existing else '[]' }};
+
+// day states: null / "preferred" / "unavailable"
+const states = {};
+existingPreferred.forEach(d => states[d] = "preferred");
+existingUnavailable.forEach(d => states[d] = "unavailable");
+
+function dateStr(day) {
+  return `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+}
+
+function buildCalendar() {
+  const cal = document.getElementById("calendar");
+  cal.innerHTML = "";
+
+  // First day of month: 0=Sunday in JS, but we display Sun first
+  const firstDate = new Date(year, month - 1, 1);
+  // Hebrew week starts Sunday (0). JS getDay() returns 0=Sun.
+  const startCol = firstDate.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+
+  // Reorder: our columns are Sun Mon Tue Wed Thu Fri Sat
+  // offset = startCol (already 0=Sun)
+  for (let i = 0; i < startCol; i++) {
+    const empty = document.createElement("div");
+    cal.appendChild(empty);
+  }
+
+  for (let day = 1; day <= numDays; day++) {
+    const ds = dateStr(day);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = day;
+    btn.dataset.date = ds;
+    btn.className = "rounded py-2 text-sm font-medium transition-colors";
+    applyStyle(btn, states[ds]);
+    btn.addEventListener("click", () => toggle(ds, btn));
+    cal.appendChild(btn);
+  }
+
+  updateInputs();
+}
+
+function applyStyle(btn, state) {
+  btn.className = "rounded py-2 text-sm font-medium transition-colors border ";
+  if (state === "preferred") {
+    btn.className += "bg-green-200 border-green-400 text-green-800";
+  } else if (state === "unavailable") {
+    btn.className += "bg-red-200 border-red-400 text-red-800";
+  } else {
+    btn.className += "bg-white border-gray-200 hover:bg-gray-100 text-gray-700";
+  }
+}
+
+function toggle(ds, btn) {
+  const cur = states[ds];
+  if (!cur) states[ds] = "preferred";
+  else if (cur === "preferred") states[ds] = "unavailable";
+  else delete states[ds];
+  applyStyle(btn, states[ds]);
+  updateInputs();
+}
+
+function updateInputs() {
+  const prefDiv = document.getElementById("preferred-inputs");
+  const unavDiv = document.getElementById("unavailable-inputs");
+  prefDiv.innerHTML = "";
+  unavDiv.innerHTML = "";
+  Object.entries(states).forEach(([d, s]) => {
+    const inp = document.createElement("input");
+    inp.type = "hidden";
+    inp.value = d;
+    if (s === "preferred") { inp.name = "preferred[]"; prefDiv.appendChild(inp); }
+    else if (s === "unavailable") { inp.name = "unavailable[]"; unavDiv.appendChild(inp); }
+  });
+}
+
+buildCalendar();
+</script>
+</body>
+</html>
