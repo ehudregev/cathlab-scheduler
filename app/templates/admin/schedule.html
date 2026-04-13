@@ -38,6 +38,67 @@
 </div>
 {% endif %}
 
+<!-- Fairness table -->
+<div class="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+
+  <!-- On-call fairness -->
+  {% if oncall_doctors %}
+  <div class="bg-white rounded-xl shadow overflow-hidden">
+    <div class="bg-blue-700 text-white px-4 py-2 font-semibold text-sm">טבלת צדק — כוננויות</div>
+    <table class="w-full text-right text-xs">
+      <thead class="bg-gray-100">
+        <tr>
+          <th class="px-3 py-2">רופא</th>
+          <th class="px-3 py-2 text-center">חול החודש</th>
+          <th class="px-3 py-2 text-center">ס״ש החודש</th>
+          <th class="px-3 py-2 text-center">חול שנתי</th>
+          <th class="px-3 py-2 text-center">ס״ש שנתי</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y">
+        {% for doc in oncall_doctors %}
+        {% set s = fairness.get(doc.id, {}) %}
+        <tr class="hover:bg-gray-50">
+          <td class="px-3 py-2 font-medium">{{ doc.name }}</td>
+          <td class="px-3 py-2 text-center">{{ s.get('month_weekday_oncalls', 0) }}</td>
+          <td class="px-3 py-2 text-center">{{ s.get('month_weekend_oncalls', 0) }}</td>
+          <td class="px-3 py-2 text-center font-semibold text-blue-700">{{ s.get('annual_weekday_oncalls', 0) }}</td>
+          <td class="px-3 py-2 text-center font-semibold text-blue-700">{{ s.get('annual_weekend_oncalls', 0) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- Session fairness -->
+  {% if session_doctors %}
+  <div class="bg-white rounded-xl shadow overflow-hidden">
+    <div class="bg-green-700 text-white px-4 py-2 font-semibold text-sm">טבלת צדק — ססיות</div>
+    <table class="w-full text-right text-xs">
+      <thead class="bg-gray-100">
+        <tr>
+          <th class="px-3 py-2">רופא</th>
+          <th class="px-3 py-2 text-center">ססיות החודש</th>
+          <th class="px-3 py-2 text-center">ססיות שנתי</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y">
+        {% for doc in session_doctors %}
+        {% set s = fairness.get(doc.id, {}) %}
+        <tr class="hover:bg-gray-50">
+          <td class="px-3 py-2 font-medium">{{ doc.name }}</td>
+          <td class="px-3 py-2 text-center">{{ s.get('month_sessions', 0) }}</td>
+          <td class="px-3 py-2 text-center font-semibold text-green-700">{{ s.get('annual_sessions', 0) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+</div>
+
 <div class="bg-white rounded-xl shadow overflow-x-auto">
   <table class="w-full text-right text-sm">
     <thead class="bg-gray-100">

@@ -72,6 +72,57 @@ def delete_doctor(doctor_id):
     return redirect(url_for("admin.doctors"))
 
 
+def calc_fairness(doctors, entries, year, month):
+    """
+    Returns dict: {doctor_id: {
+        month_weekday_oncalls, month_weekend_oncalls, month_sessions,
+        annual_weekday_oncalls, annual_weekend_oncalls, annual_sessions
+    }}
+    """
+    stats = {d.id: {
+        "month_weekday_oncalls": 0,
+        "month_weekend_oncalls": 0,
+        "month_sessions": 0,
+        "annual_weekday_oncalls": 0,
+        "annual_weekend_oncalls": 0,
+        "annual_sessions": 0,
+    } for d in doctors}
+
+    # Current month from ScheduleEntry
+    from datetime import date as dt
+    for e in entries:
+        if e.doctor_id not in stats:
+            continue
+        d = dt.fromisoformat(e.date_str)
+        if e.entry_type == "oncall":
+            if d.weekday() in (4, 5):  # Fri/Sat = weekend
+                stats[e.doctor_id]["month_weekend_oncalls"] += 1
+            else:
+                stats[e.doctor_id]["month_weekday_oncalls"] += 1
+        elif e.entry_type in ("session1", "session2"):
+            stats[e.doctor_id]["month_sessions"] += 1
+
+    # Annual cumulative from HistoryEntry (all months this year except current)
+    history = HistoryEntry.query.filter(
+        HistoryEntry.year == year,
+        HistoryEntry.month != month,
+    ).all()
+    for h in history:
+        if h.doctor_id not in stats:
+            continue
+        stats[h.doctor_id]["annual_weekday_oncalls"] += h.weekday_oncalls
+        stats[h.doctor_id]["annual_weekend_oncalls"] += h.weekend_oncalls
+        stats[h.doctor_id]["annual_sessions"] += h.sessions
+
+    # Add current month to annual totals
+    for doc_id, s in stats.items():
+        s["annual_weekday_oncalls"] += s["month_weekday_oncalls"]
+        s["annual_weekend_oncalls"] += s["month_weekend_oncalls"]
+        s["annual_sessions"] += s["month_sessions"]
+
+    return stats
+
+
 @admin_bp.route("/schedule/<int:year>/<int:month>")
 def view_schedule(year, month):
     days = get_month_days(year, month)
@@ -80,6 +131,7 @@ def view_schedule(year, month):
     entry_map = {(e.date_str, e.entry_type): e for e in entries}
     doctors = Doctor.query.order_by(Doctor.name).all()
     status = ScheduleStatus.query.filter_by(month=month, year=year).first()
+    fairness = calc_fairness(doctors, entries, year, month)
 
     return render_template(
         "admin/schedule.html",
@@ -92,6 +144,7 @@ def view_schedule(year, month):
         month_name=MONTH_NAMES[month],
         status=status,
         is_session_day=is_session_day,
+        fairness=fairness,
     )
 
 
