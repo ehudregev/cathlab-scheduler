@@ -72,12 +72,15 @@ def delete_doctor(doctor_id):
     return redirect(url_for("admin.doctors"))
 
 
-def calc_fairness(doctors, entries, year, month):
+def calc_fairness(doctors, entries, year, month, holiday_set):
     """
     Returns dict: {doctor_id: {
         month_weekday_oncalls, month_weekend_oncalls, month_sessions,
         annual_weekday_oncalls, annual_weekend_oncalls, annual_sessions
     }}
+    Weekend on-calls = any day without sessions:
+      Fri, Sat, holiday, holiday eve — each counted separately as 1.
+    Weekday on-calls = regular Sun–Thu (not holiday/eve).
     """
     stats = {d.id: {
         "month_weekday_oncalls": 0,
@@ -88,14 +91,15 @@ def calc_fairness(doctors, entries, year, month):
         "annual_sessions": 0,
     } for d in doctors}
 
-    # Current month from ScheduleEntry
     from datetime import date as dt
     for e in entries:
         if e.doctor_id not in stats:
             continue
         d = dt.fromisoformat(e.date_str)
         if e.entry_type == "oncall":
-            if d.weekday() in (4, 5):  # Fri/Sat = weekend
+            # Special day = Fri, Sat, holiday, or holiday eve
+            is_special = d.weekday() in (4, 5) or e.date_str in holiday_set
+            if is_special:
                 stats[e.doctor_id]["month_weekend_oncalls"] += 1
             else:
                 stats[e.doctor_id]["month_weekday_oncalls"] += 1
@@ -131,7 +135,7 @@ def view_schedule(year, month):
     entry_map = {(e.date_str, e.entry_type): e for e in entries}
     doctors = Doctor.query.order_by(Doctor.name).all()
     status = ScheduleStatus.query.filter_by(month=month, year=year).first()
-    fairness = calc_fairness(doctors, entries, year, month)
+    fairness = calc_fairness(doctors, entries, year, month, holiday_set)
 
     return render_template(
         "admin/schedule.html",
