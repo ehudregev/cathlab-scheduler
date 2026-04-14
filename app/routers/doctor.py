@@ -41,6 +41,8 @@ def request_form(token):
             existing_states[d] = "want_session"
         for d in existing.want_oncall:
             existing_states[d] = "want_oncall"
+        for d in existing.want_both:
+            existing_states[d] = "want_both"
         for d in existing.no_session:
             existing_states[d] = "no_session"
         for d in existing.no_oncall:
@@ -68,6 +70,7 @@ def submit_request(token):
 
     want_session = request.form.getlist("want_session[]")
     want_oncall = request.form.getlist("want_oncall[]")
+    want_both = request.form.getlist("want_both[]")
     no_session = request.form.getlist("no_session[]")
     no_oncall = request.form.getlist("no_oncall[]")
     no_both = request.form.getlist("no_both[]")
@@ -80,6 +83,7 @@ def submit_request(token):
     if existing:
         existing.want_session = want_session
         existing.want_oncall = want_oncall
+        existing.want_both = want_both
         existing.no_session = no_session
         existing.no_oncall = no_oncall
         existing.no_both = no_both
@@ -95,6 +99,7 @@ def submit_request(token):
         )
         req.want_session = want_session
         req.want_oncall = want_oncall
+        req.want_both = want_both
         req.no_session = no_session
         req.no_oncall = no_oncall
         req.no_both = no_both

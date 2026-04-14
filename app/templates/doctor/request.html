@@ -11,6 +11,7 @@
     .state-want-oncall   { background:#dbeafe; border-color:#3b82f6; color:#1e3a8a; }
     .state-no-session    { background:#fef9c3; border-color:#f59e0b; color:#78350f; }
     .state-no-oncall     { background:#fee2e2; border-color:#ef4444; color:#7f1d1d; }
+    .state-want-both     { background:#fff7ed; border-color:#f97316; color:#7c2d12; }
     .state-no-both       { background:#f3e8ff; border-color:#a855f7; color:#4c1d95; }
     .state-neutral       { background:#f9fafb; border-color:#e5e7eb; color:#374151; }
   </style>
@@ -53,6 +54,10 @@
           <div class="flex items-center gap-2">
             <span class="w-7 h-7 rounded border-2 state-want-oncall flex items-center justify-center text-xs font-bold">כ</span>
             <span>רוצה כוננות</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="w-7 h-7 rounded border-2 state-want-both flex items-center justify-center text-xs font-bold">סכ</span>
+            <span>רוצה גם וגם</span>
           </div>
           <div class="flex items-center gap-2">
             <span class="w-7 h-7 rounded border-2 state-no-session flex items-center justify-center text-xs font-bold">✗ס</span>
@@ -106,6 +111,7 @@ const doesOncall   = {{ 'true' if doctor.does_oncall else 'false' }};
 let cycle = ['neutral'];
 if (doesSessions) cycle.push('want_session');
 if (doesOncall)   cycle.push('want_oncall');
+if (doesSessions && doesOncall) cycle.push('want_both');
 if (doesSessions) cycle.push('no_session');
 if (doesOncall)   cycle.push('no_oncall');
 if (doesSessions && doesOncall) cycle.push('no_both');
@@ -114,6 +120,7 @@ const stateConfig = {
   neutral:      { label: '',    cls: 'state-neutral',      icon: '' },
   want_session: { label: 'ס',  cls: 'state-want-session', icon: 'ס' },
   want_oncall:  { label: 'כ',  cls: 'state-want-oncall',  icon: 'כ' },
+  want_both:    { label: 'סכ', cls: 'state-want-both',    icon: 'סכ' },
   no_session:   { label: '✗ס', cls: 'state-no-session',   icon: '✗ס' },
   no_oncall:    { label: '✗כ', cls: 'state-no-oncall',    icon: '✗כ' },
   no_both:      { label: '✗✗', cls: 'state-no-both',      icon: '✗✗' },
@@ -185,7 +192,7 @@ function updateInputs() {
   const container = document.getElementById('form-inputs');
   container.innerHTML = '';
   const groups = {
-    want_session: [], want_oncall: [],
+    want_session: [], want_oncall: [], want_both: [],
     no_session: [], no_oncall: [], no_both: []
   };
   Object.entries(states).forEach(([d, s]) => {

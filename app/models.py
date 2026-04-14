@@ -26,6 +26,7 @@ class Request(db.Model):
     # Per-date preferences (JSON lists of date strings YYYY-MM-DD)
     want_session_json = db.Column(db.Text, default="[]")       # רוצה ססיה
     want_oncall_json = db.Column(db.Text, default="[]")        # רוצה כוננות
+    want_both_json = db.Column(db.Text, default="[]")          # רוצה גם ססיה וגם כוננות
     no_session_json = db.Column(db.Text, default="[]")         # לא יכול ססיה
     no_oncall_json = db.Column(db.Text, default="[]")          # לא יכול כוננות
     no_both_json = db.Column(db.Text, default="[]")            # לא יכול כלום
@@ -50,6 +51,11 @@ class Request(db.Model):
     def want_oncall(self): return self._get("want_oncall_json")
     @want_oncall.setter
     def want_oncall(self, v): self._set("want_oncall_json", v)
+
+    @property
+    def want_both(self): return self._get("want_both_json")
+    @want_both.setter
+    def want_both(self, v): self._set("want_both_json", v)
 
     @property
     def no_session(self): return self._get("no_session_json")
@@ -79,11 +85,11 @@ class Request(db.Model):
 
     @property
     def preferred_oncall(self):
-        return set(self.want_oncall)
+        return set(self.want_oncall) | set(self.want_both)
 
     @property
     def preferred_session(self):
-        return set(self.want_session)
+        return set(self.want_session) | set(self.want_both)
 
 
 class ScheduleEntry(db.Model):

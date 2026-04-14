@@ -37,6 +37,7 @@ def _migrate(db):
     new_columns = [
         ("requests", "want_session_json", "TEXT DEFAULT '[]'"),
         ("requests", "want_oncall_json",  "TEXT DEFAULT '[]'"),
+        ("requests", "want_both_json",    "TEXT DEFAULT '[]'"),
         ("requests", "no_session_json",   "TEXT DEFAULT '[]'"),
         ("requests", "no_oncall_json",    "TEXT DEFAULT '[]'"),
         ("requests", "no_both_json",      "TEXT DEFAULT '[]'"),

@@ -16,6 +16,7 @@
 <div class="bg-white rounded-xl shadow p-4 mb-6 flex flex-wrap gap-3 text-sm">
   <span class="flex items-center gap-1"><span class="w-5 h-5 rounded bg-emerald-100 border border-emerald-400 inline-block"></span> רוצה ססיה</span>
   <span class="flex items-center gap-1"><span class="w-5 h-5 rounded bg-blue-100 border border-blue-400 inline-block"></span> רוצה כוננות</span>
+  <span class="flex items-center gap-1"><span class="w-5 h-5 rounded bg-orange-100 border border-orange-400 inline-block"></span> רוצה גם וגם</span>
   <span class="flex items-center gap-1"><span class="w-5 h-5 rounded bg-yellow-100 border border-yellow-400 inline-block"></span> לא יכול ססיה</span>
   <span class="flex items-center gap-1"><span class="w-5 h-5 rounded bg-red-100 border border-red-400 inline-block"></span> לא יכול כוננות</span>
   <span class="flex items-center gap-1"><span class="w-5 h-5 rounded bg-purple-100 border border-purple-400 inline-block"></span> לא יכול כלום</span>
@@ -49,6 +50,7 @@
       {% set state = '' %}
       {% if ds in r.want_session %}{% set state = 'want_session' %}
       {% elif ds in r.want_oncall %}{% set state = 'want_oncall' %}
+      {% elif ds in r.want_both %}{% set state = 'want_both' %}
       {% elif ds in r.no_session %}{% set state = 'no_session' %}
       {% elif ds in r.no_oncall %}{% set state = 'no_oncall' %}
       {% elif ds in r.no_both %}{% set state = 'no_both' %}
@@ -57,6 +59,7 @@
       <div class="rounded border py-1 font-medium
         {% if state == 'want_session' %}bg-emerald-100 border-emerald-400 text-emerald-800
         {% elif state == 'want_oncall' %}bg-blue-100 border-blue-400 text-blue-800
+        {% elif state == 'want_both' %}bg-orange-100 border-orange-400 text-orange-800
         {% elif state == 'no_session' %}bg-yellow-100 border-yellow-400 text-yellow-800
         {% elif state == 'no_oncall' %}bg-red-100 border-red-400 text-red-800
         {% elif state == 'no_both' %}bg-purple-100 border-purple-400 text-purple-800
