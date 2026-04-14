@@ -27,5 +27,26 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        _migrate(db)
 
     return app
+
+
+def _migrate(db):
+    """Add missing columns to existing tables without Alembic."""
+    new_columns = [
+        ("requests", "want_session_json", "TEXT DEFAULT '[]'"),
+        ("requests", "want_oncall_json",  "TEXT DEFAULT '[]'"),
+        ("requests", "no_session_json",   "TEXT DEFAULT '[]'"),
+        ("requests", "no_oncall_json",    "TEXT DEFAULT '[]'"),
+        ("requests", "no_both_json",      "TEXT DEFAULT '[]'"),
+    ]
+    with db.engine.connect() as conn:
+        for table, column, col_def in new_columns:
+            try:
+                conn.execute(
+                    db.text(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()  # column already exists — skip
