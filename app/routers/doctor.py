@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, redirect, url_for, abort
+from flask import Blueprint, render_template, request, redirect, url_for
 from app import db
 from app.models import Doctor, Request
 from datetime import datetime, date
@@ -8,7 +8,6 @@ doctor_bp = Blueprint("doctor", __name__)
 
 
 def get_target_month():
-    """Doctors submit for next month. If past the 15th, show month after next."""
     today = date.today()
     if today.day <= 15:
         if today.month == 12:
@@ -35,6 +34,21 @@ def request_form(token):
         "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"
     ][month]
 
+    # Build existing state map {date_str: state}
+    existing_states = {}
+    if existing:
+        for d in existing.want_session:
+            existing_states[d] = "want_session"
+        for d in existing.want_oncall:
+            existing_states[d] = "want_oncall"
+        for d in existing.no_session:
+            existing_states[d] = "no_session"
+        for d in existing.no_oncall:
+            existing_states[d] = "no_oncall"
+        for d in existing.no_both:
+            existing_states[d] = "no_both"
+
+    import json
     return render_template(
         "doctor/request.html",
         doctor=doctor,
@@ -43,6 +57,7 @@ def request_form(token):
         month_name=month_name,
         num_days=num_days,
         existing=existing,
+        existing_states_json=json.dumps(existing_states),
     )
 
 
@@ -51,8 +66,11 @@ def submit_request(token):
     doctor = Doctor.query.filter_by(token=token).first_or_404()
     month, year = get_target_month()
 
-    preferred = request.form.getlist("preferred[]")
-    unavailable = request.form.getlist("unavailable[]")
+    want_session = request.form.getlist("want_session[]")
+    want_oncall = request.form.getlist("want_oncall[]")
+    no_session = request.form.getlist("no_session[]")
+    no_oncall = request.form.getlist("no_oncall[]")
+    no_both = request.form.getlist("no_both[]")
     desired_sessions = request.form.get("desired_sessions", type=int)
 
     existing = Request.query.filter_by(
@@ -60,8 +78,11 @@ def submit_request(token):
     ).first()
 
     if existing:
-        existing.preferred_dates = preferred
-        existing.unavailable_dates = unavailable
+        existing.want_session = want_session
+        existing.want_oncall = want_oncall
+        existing.no_session = no_session
+        existing.no_oncall = no_oncall
+        existing.no_both = no_both
         if doctor.does_sessions:
             existing.desired_sessions = desired_sessions
         existing.submitted_at = datetime.utcnow()
@@ -72,8 +93,11 @@ def submit_request(token):
             year=year,
             desired_sessions=desired_sessions if doctor.does_sessions else None,
         )
-        req.preferred_dates = preferred
-        req.unavailable_dates = unavailable
+        req.want_session = want_session
+        req.want_oncall = want_oncall
+        req.no_session = no_session
+        req.no_oncall = no_oncall
+        req.no_both = no_both
         db.session.add(req)
 
     db.session.commit()

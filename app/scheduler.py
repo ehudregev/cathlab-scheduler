@@ -99,17 +99,28 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     oncall_counts = get_cumulative_counts(oncall_doctors, month, year, db, HistoryEntry, ScheduleEntry)
     session_counts = get_cumulative_counts(session_doctors, month, year, db, HistoryEntry, ScheduleEntry)
 
-    # Build unavailability sets
-    unavailable = {}
-    for doc in oncall_doctors + session_doctors:
-        r = req_by_doctor.get(doc.id)
-        unavailable[doc.id] = set(r.unavailable_dates if r else [])
+    # Build per-type unavailability and preference sets
+    unavailable_oncall = {}
+    unavailable_session = {}
+    preferred_oncall = {}
+    preferred_session = {}
 
-    # Build preferred sets
-    preferred = {}
     for doc in oncall_doctors + session_doctors:
         r = req_by_doctor.get(doc.id)
-        preferred[doc.id] = set(r.preferred_dates if r else [])
+        if r:
+            unavailable_oncall[doc.id] = r.unavailable_oncall
+            unavailable_session[doc.id] = r.unavailable_session
+            preferred_oncall[doc.id] = r.preferred_oncall
+            preferred_session[doc.id] = r.preferred_session
+        else:
+            unavailable_oncall[doc.id] = set()
+            unavailable_session[doc.id] = set()
+            preferred_oncall[doc.id] = set()
+            preferred_session[doc.id] = set()
+
+    # Backwards compat alias for on-call scheduling
+    unavailable = unavailable_oncall
+    preferred = preferred_oncall
 
     # ── ON-CALL SCHEDULING ──────────────────────────────────────────────────
 
@@ -206,16 +217,16 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         available = [
             doc for doc in session_doctors
             if session_assigned_count[doc.id] < session_budget[doc.id]
-            and date_str not in unavailable[doc.id]
+            and date_str not in unavailable_session[doc.id]
         ]
 
         # Sort: prefer doctors who prefer this date, then by (assigned/budget ratio) asc
         def sort_key(doc):
             ratio = session_assigned_count[doc.id] / max(session_budget[doc.id], 1)
             return (
-                -(date_str in preferred[doc.id]),  # preferred first (negative to sort desc)
+                -(date_str in preferred_session[doc.id]),
                 ratio,
-                session_hist[doc.id]  # historical sessions (less history first)
+                session_hist[doc.id]
             )
 
         available_sorted = sorted(available, key=sort_key)

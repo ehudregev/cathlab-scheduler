@@ -23,29 +23,67 @@ class Request(db.Model):
     month = db.Column(db.Integer, nullable=False)
     year = db.Column(db.Integer, nullable=False)
     desired_sessions = db.Column(db.Integer, nullable=True)
-    preferred_dates_json = db.Column(db.Text, default="[]")
-    unavailable_dates_json = db.Column(db.Text, default="[]")
+    # Per-date preferences (JSON lists of date strings YYYY-MM-DD)
+    want_session_json = db.Column(db.Text, default="[]")       # רוצה ססיה
+    want_oncall_json = db.Column(db.Text, default="[]")        # רוצה כוננות
+    no_session_json = db.Column(db.Text, default="[]")         # לא יכול ססיה
+    no_oncall_json = db.Column(db.Text, default="[]")          # לא יכול כוננות
+    no_both_json = db.Column(db.Text, default="[]")            # לא יכול כלום
     submitted_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     __table_args__ = (
         db.UniqueConstraint("doctor_id", "month", "year", name="uq_doctor_month_year"),
     )
 
-    @property
-    def preferred_dates(self):
-        return json.loads(self.preferred_dates_json or "[]")
+    def _get(self, field):
+        return json.loads(getattr(self, field) or "[]")
 
-    @preferred_dates.setter
-    def preferred_dates(self, value):
-        self.preferred_dates_json = json.dumps(value)
+    def _set(self, field, value):
+        setattr(self, field, json.dumps(value))
 
     @property
-    def unavailable_dates(self):
-        return json.loads(self.unavailable_dates_json or "[]")
+    def want_session(self): return self._get("want_session_json")
+    @want_session.setter
+    def want_session(self, v): self._set("want_session_json", v)
 
-    @unavailable_dates.setter
-    def unavailable_dates(self, value):
-        self.unavailable_dates_json = json.dumps(value)
+    @property
+    def want_oncall(self): return self._get("want_oncall_json")
+    @want_oncall.setter
+    def want_oncall(self, v): self._set("want_oncall_json", v)
+
+    @property
+    def no_session(self): return self._get("no_session_json")
+    @no_session.setter
+    def no_session(self, v): self._set("no_session_json", v)
+
+    @property
+    def no_oncall(self): return self._get("no_oncall_json")
+    @no_oncall.setter
+    def no_oncall(self, v): self._set("no_oncall_json", v)
+
+    @property
+    def no_both(self): return self._get("no_both_json")
+    @no_both.setter
+    def no_both(self, v): self._set("no_both_json", v)
+
+    # Derived helpers for the scheduler
+    @property
+    def unavailable_oncall(self):
+        """Dates where doctor can't do on-call."""
+        return set(self.no_oncall) | set(self.no_both)
+
+    @property
+    def unavailable_session(self):
+        """Dates where doctor can't do session."""
+        return set(self.no_session) | set(self.no_both)
+
+    @property
+    def preferred_oncall(self):
+        return set(self.want_oncall)
+
+    @property
+    def preferred_session(self):
+        return set(self.want_session)
 
 
 class ScheduleEntry(db.Model):
