@@ -1,5 +1,5 @@
 from fpdf import FPDF
-import calendar
+from bidi.algorithm import get_display
 import os
 
 MONTH_NAMES_HE = [
@@ -10,6 +10,13 @@ MONTH_NAMES_HE = [
 DAY_NAMES_HE = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
 
 FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "Heebo.ttf")
+
+
+def bidi(text):
+    """Convert Hebrew/mixed text to visual (LTR-rendered) order for fpdf2."""
+    if not text:
+        return ""
+    return get_display(str(text))
 
 
 def generate_pdf(year, month, month_name, days, holiday_set, entry_map, doctors):
@@ -24,7 +31,7 @@ def generate_pdf(year, month, month_name, days, holiday_set, entry_map, doctors)
 
     # Title
     pdf.set_font("Heebo", "B", 14)
-    title = f"{month_name} {year} — לוח קת'לב"
+    title = bidi(f"לוח קת'לב — {month_name} {year}")
     pdf.cell(0, 10, title, new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.ln(2)
 
@@ -45,7 +52,7 @@ def generate_pdf(year, month, month_name, days, holiday_set, entry_map, doctors)
     ]
 
     for key, label in headers:
-        pdf.cell(col_widths[key], 7, label, border=1, align="C", fill=True)
+        pdf.cell(col_widths[key], 7, bidi(label), border=1, align="C", fill=True)
     pdf.ln()
 
     pdf.set_text_color(0, 0, 0)
@@ -64,9 +71,9 @@ def generate_pdf(year, month, month_name, days, holiday_set, entry_map, doctors)
 
         def doctor_name(entry):
             if not entry or not entry.doctor_id:
-                return "---"
+                return "—"
             doc = doctors.get(entry.doctor_id)
-            return doc.name if doc else "---"
+            return bidi(doc.name) if doc else "—"
 
         if is_holiday:
             pdf.set_fill_color(255, 220, 150)
@@ -76,11 +83,11 @@ def generate_pdf(year, month, month_name, days, holiday_set, entry_map, doctors)
             pdf.set_fill_color(245, 245, 245)
 
         day_name = DAY_NAMES_HE[day.weekday()]
-        note = " חג" if is_holiday else ""
+        note = bidi(" חג") if is_holiday else ""
 
-        pdf.cell(col_widths["date"],   row_h, day.strftime("%d/%m"),        border=1, align="C", fill=True)
-        pdf.cell(col_widths["day"],    row_h, day_name + note,              border=1, align="C", fill=True)
-        pdf.cell(col_widths["oncall"], row_h, doctor_name(oncall_e),        border=1, align="C", fill=True)
+        pdf.cell(col_widths["date"],   row_h, day.strftime("%d/%m"),          border=1, align="C", fill=True)
+        pdf.cell(col_widths["day"],    row_h, bidi(day_name) + note,          border=1, align="C", fill=True)
+        pdf.cell(col_widths["oncall"], row_h, doctor_name(oncall_e),          border=1, align="C", fill=True)
 
         if not is_weekend and not is_holiday:
             pdf.cell(col_widths["sess1"], row_h, doctor_name(sess1_e), border=1, align="C", fill=True)
