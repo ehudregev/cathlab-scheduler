@@ -97,7 +97,6 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
 
     # Cumulative counts
     oncall_counts = get_cumulative_counts(oncall_doctors, month, year, db, HistoryEntry, ScheduleEntry)
-    session_counts = get_cumulative_counts(session_doctors, month, year, db, HistoryEntry, ScheduleEntry)
 
     # Build per-type unavailability and preference sets
     unavailable_oncall = {}
@@ -219,7 +218,6 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     # Build session budgets (requested count per doctor)
     session_budget = {}
     session_assigned_count = defaultdict(int)
-    session_hist = {d.id: session_counts[d.id]["sessions"] for d in session_doctors}
 
     num_session_days = len(session_days)
     for doc in session_doctors:
@@ -248,7 +246,6 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             return (
                 -(date_str in preferred_session[doc.id]),
                 ratio,
-                session_hist[doc.id]
             )
 
         available_sorted = sorted(available, key=sort_key)
