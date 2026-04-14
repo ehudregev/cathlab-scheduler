@@ -204,9 +204,14 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     session_assigned_count = defaultdict(int)
     session_hist = {d.id: session_counts[d.id]["sessions"] for d in session_doctors}
 
+    num_session_days = len(session_days)
     for doc in session_doctors:
         r = req_by_doctor.get(doc.id)
-        session_budget[doc.id] = r.desired_sessions if r and r.desired_sessions is not None else 0
+        if r and r.desired_sessions is not None and r.desired_sessions > 0:
+            session_budget[doc.id] = r.desired_sessions
+        else:
+            # No request or no preference — give a fair default share
+            session_budget[doc.id] = max(1, round(num_session_days * 2 / max(len(session_doctors), 1)))
 
     for day in session_days:
         date_str = day.strftime("%Y-%m-%d")

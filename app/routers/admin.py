@@ -232,6 +232,25 @@ def publish(year, month):
     return redirect(url_for("admin.view_schedule", year=year, month=month))
 
 
+@admin_bp.route("/requests/<int:year>/<int:month>")
+def view_requests(year, month):
+    doctors = Doctor.query.order_by(Doctor.name).all()
+    requests = Request.query.filter_by(month=month, year=year).all()
+    req_by_doctor = {r.doctor_id: r for r in requests}
+    import calendar
+    num_days = calendar.monthrange(year, month)[1]
+    days = list(range(1, num_days + 1))
+    return render_template(
+        "admin/requests.html",
+        doctors=doctors,
+        req_by_doctor=req_by_doctor,
+        month=month,
+        year=year,
+        month_name=MONTH_NAMES[month],
+        days=days,
+    )
+
+
 @admin_bp.route("/schedule/<int:year>/<int:month>/pdf")
 def download_pdf(year, month):
     days = get_month_days(year, month)
