@@ -224,11 +224,14 @@ def update_entry(year, month):
 
 @admin_bp.route("/schedule/<int:year>/<int:month>/publish", methods=["POST"])
 def publish(year, month):
+    from app.scheduler import save_schedule_to_history
     status = ScheduleStatus.query.filter_by(month=month, year=year).first()
     if status:
         status.status = "published"
         status.published_at = datetime.utcnow()
         db.session.commit()
+    # Save this month's counts to history so next month's algorithm is fair
+    save_schedule_to_history(year, month, db, ScheduleEntry, HistoryEntry, Doctor)
     return redirect(url_for("admin.view_schedule", year=year, month=month))
 
 

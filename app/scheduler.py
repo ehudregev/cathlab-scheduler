@@ -252,48 +252,50 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
 
 
 def save_schedule_to_history(year, month, db, ScheduleEntry, HistoryEntry, Doctor):
-    """After publishing, save this month's counts to history."""
-    oncall_doctors = Doctor.query.filter_by(does_oncall=True).all()
-    session_doctors = Doctor.query.filter_by(does_sessions=True).all()
-    all_doctors = list({d.id: d for d in oncall_doctors + session_doctors}.values())
+    """
+    After publishing, count each doctor's assignments and save to HistoryEntry.
+    Weekend on-calls = Fri, Sat, holidays, holiday eves (each counted as 1).
+    Weekday on-calls = Sun-Thu that are not holidays/eves.
+    """
+    from datetime import date as dt
+    holiday_set = get_israeli_holidays(year)
+    all_entries = ScheduleEntry.query.filter_by(month=month, year=year).all()
+    all_doctors = Doctor.query.all()
 
     for doc in all_doctors:
-        weekday_oncalls = ScheduleEntry.query.filter_by(
-            month=month, year=year, entry_type="oncall", doctor_id=doc.id
-        ).filter(
-            db.func.extract("dow", db.cast(ScheduleEntry.date_str, db.Date)).in_([0, 1, 2, 3, 4])
-        ).count()
+        weekday_oncalls = 0
+        weekend_oncalls = 0
+        sessions = 0
 
-        weekend_oncalls_fri = ScheduleEntry.query.filter_by(
-            month=month, year=year, entry_type="oncall", doctor_id=doc.id
-        ).filter(
-            db.func.extract("dow", db.cast(ScheduleEntry.date_str, db.Date)) == 5
-        ).count()
+        for e in all_entries:
+            if e.doctor_id != doc.id:
+                continue
+            d = dt.fromisoformat(e.date_str)
+            if e.entry_type == "oncall":
+                is_special = d.weekday() in (4, 5) or e.date_str in holiday_set
+                if is_special:
+                    weekend_oncalls += 1
+                else:
+                    weekday_oncalls += 1
+            elif e.entry_type in ("session1", "session2"):
+                sessions += 1
 
-        sessions = ScheduleEntry.query.filter(
-            ScheduleEntry.month == month,
-            ScheduleEntry.year == year,
-            ScheduleEntry.entry_type.in_(["session1", "session2"]),
-            ScheduleEntry.doctor_id == doc.id
-        ).count()
+        if weekday_oncalls + weekend_oncalls + sessions == 0:
+            continue
 
         existing = HistoryEntry.query.filter_by(
             doctor_id=doc.id, month=month, year=year
         ).first()
-
         if existing:
             existing.weekday_oncalls = weekday_oncalls
-            existing.weekend_oncalls = weekend_oncalls_fri
+            existing.weekend_oncalls = weekend_oncalls
             existing.sessions = sessions
         else:
-            entry = HistoryEntry(
-                doctor_id=doc.id,
-                month=month,
-                year=year,
+            db.session.add(HistoryEntry(
+                doctor_id=doc.id, month=month, year=year,
                 weekday_oncalls=weekday_oncalls,
-                weekend_oncalls=weekend_oncalls_fri,
+                weekend_oncalls=weekend_oncalls,
                 sessions=sessions
-            )
-            db.session.add(entry)
+            ))
 
     db.session.commit()
