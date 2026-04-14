@@ -125,16 +125,16 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     # ── ON-CALL SCHEDULING ──────────────────────────────────────────────────
 
     weekend_units = get_weekend_units(days)
-    weekday_oncall_days = [
-        d for d in days
-        if d.weekday() in (0, 1, 2, 3, 6) and d.strftime("%Y-%m-%d") not in holiday_set
-    ]
-    # Also include holiday weekdays as oncall days (just no sessions)
+    # All weekdays (including holidays) need on-call coverage
     weekday_oncall_days_all = [d for d in days if d.weekday() in (0, 1, 2, 3, 6)]
 
     # Weekend on-call assignment
     weekend_assigned = {}
     weekend_count = {d.id: oncall_counts[d.id]["weekend_oncalls"] for d in oncall_doctors}
+    total_oncall_count = {
+        d.id: oncall_counts[d.id]["weekday_oncalls"] + oncall_counts[d.id]["weekend_oncalls"]
+        for d in oncall_doctors
+    }
 
     for (fri, sat) in weekend_units:
         fri_str = fri.strftime("%Y-%m-%d")
@@ -160,6 +160,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             weekend_assigned[fri_str] = assigned.id
             weekend_assigned[sat_str] = assigned.id
             weekend_count[assigned.id] += 1
+            total_oncall_count[assigned.id] += 1  # each weekend unit = 1 total oncall
             entries.append({"date_str": fri_str, "entry_type": "oncall", "doctor_id": assigned.id})
             entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": assigned.id})
         else:
@@ -168,8 +169,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": None})
 
     # Weekday on-call assignment
-    weekday_count = {d.id: oncall_counts[d.id]["weekday_oncalls"] for d in oncall_doctors}
-
+    # Sort by total on-calls (weekday + weekend) so weekend duty reduces weekday load
     for d in weekday_oncall_days_all:
         date_str = d.strftime("%Y-%m-%d")
 
@@ -177,7 +177,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             oncall_doctors,
             key=lambda doc: (
                 date_str in unavailable[doc.id],
-                weekday_count[doc.id],
+                total_oncall_count[doc.id],  # fewest total oncalls first
                 -(date_str in preferred[doc.id])
             )
         )
@@ -189,7 +189,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                 break
 
         if assigned:
-            weekday_count[assigned.id] += 1
+            total_oncall_count[assigned.id] += 1
             entries.append({"date_str": date_str, "entry_type": "oncall", "doctor_id": assigned.id})
         else:
             alerts.append(f"לא נמצא כונן זמין ליום {date_str}")
