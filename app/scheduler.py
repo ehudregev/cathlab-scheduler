@@ -173,14 +173,29 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     for d in weekday_oncall_days_all:
         date_str = d.strftime("%Y-%m-%d")
 
-        candidates = sorted(
-            oncall_doctors,
-            key=lambda doc: (
-                date_str in unavailable[doc.id],
-                total_oncall_count[doc.id],  # fewest total oncalls first
-                -(date_str in preferred[doc.id])
+        is_special = d.weekday() in (4, 5) or date_str in holiday_set
+
+        if is_special:
+            # Holiday/eve/Fri/Sat: sort by weekend count first, then total
+            candidates = sorted(
+                oncall_doctors,
+                key=lambda doc: (
+                    date_str in unavailable[doc.id],
+                    weekend_count[doc.id],
+                    total_oncall_count[doc.id],
+                    -(date_str in preferred[doc.id])
+                )
             )
-        )
+        else:
+            # Regular weekday: sort by total count
+            candidates = sorted(
+                oncall_doctors,
+                key=lambda doc: (
+                    date_str in unavailable[doc.id],
+                    total_oncall_count[doc.id],
+                    -(date_str in preferred[doc.id])
+                )
+            )
 
         assigned = None
         for doc in candidates:
@@ -190,6 +205,8 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
 
         if assigned:
             total_oncall_count[assigned.id] += 1
+            if is_special:
+                weekend_count[assigned.id] += 1
             entries.append({"date_str": date_str, "entry_type": "oncall", "doctor_id": assigned.id})
         else:
             alerts.append(f"לא נמצא כונן זמין ליום {date_str}")
