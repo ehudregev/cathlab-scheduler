@@ -22,9 +22,22 @@ def current_month_year():
     return today.month, today.year
 
 
+def submission_target_month():
+    """Returns the month doctors are currently submitting for."""
+    today = date.today()
+    if today.day <= 15:
+        if today.month == 12:
+            return 1, today.year + 1
+        return today.month + 1, today.year
+    else:
+        if today.month >= 11:
+            return (today.month + 2) % 12 or 12, today.year + 1
+        return today.month + 2, today.year
+
+
 @admin_bp.route("/")
 def dashboard():
-    month, year = current_month_year()
+    month, year = submission_target_month()
     doctors = Doctor.query.order_by(Doctor.name).all()
     requests = Request.query.filter_by(month=month, year=year).all()
     submitted_ids = {r.doctor_id for r in requests}
