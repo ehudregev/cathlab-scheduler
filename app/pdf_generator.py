@@ -1,5 +1,6 @@
 from fpdf import FPDF
 import calendar
+import os
 
 MONTH_NAMES_HE = [
     "", "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
@@ -8,62 +9,39 @@ MONTH_NAMES_HE = [
 
 DAY_NAMES_HE = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
 
-
-def reverse_hebrew(text):
-    """FPDF renders RTL text reversed. This helper reverses Hebrew strings."""
-    if not text:
-        return ""
-    return text[::-1]
-
-
-class SchedulePDF(FPDF):
-    def __init__(self, month_name, year):
-        super().__init__(orientation="L", unit="mm", format="A4")
-        self.month_name = month_name
-        self.year = year
-        self.set_margins(10, 10, 10)
-        self.set_auto_page_break(False)
-
-    def header(self):
-        self.set_font("Helvetica", "B", 16)
-        title = f"{self.year} {self.month_name[::-1]}"
-        self.cell(0, 10, f"{title}   -   {'::-1'[::-1]}", ln=True, align="C")
-        self.ln(2)
-
-    def footer(self):
-        self.set_y(-10)
-        self.set_font("Helvetica", "", 8)
-        self.cell(0, 5, f"Page {self.page_no()}", align="C")
+FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "Heebo.ttf")
 
 
 def generate_pdf(year, month, month_name, days, holiday_set, entry_map, doctors):
     """Generate and return PDF bytes for the monthly schedule."""
 
     pdf = FPDF(orientation="L", unit="mm", format="A4")
+    pdf.add_font("Heebo", style="", fname=FONT_PATH)
+    pdf.add_font("Heebo", style="B", fname=FONT_PATH)
     pdf.add_page()
     pdf.set_auto_page_break(False)
     pdf.set_margins(8, 8, 8)
 
     # Title
-    pdf.set_font("Helvetica", "B", 14)
-    title = f"Cathlab Schedule - {month_name[::-1]} {year}"
-    pdf.cell(0, 10, title, ln=True, align="C")
+    pdf.set_font("Heebo", "B", 14)
+    title = f"{month_name} {year} — לוח קת'לב"
+    pdf.cell(0, 10, title, new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.ln(2)
 
-    # Table headers
+    # Column widths
     col_widths = {"date": 22, "day": 22, "oncall": 60, "sess1": 60, "sess2": 60}
-    total_w = sum(col_widths.values())
 
+    # Table header
     pdf.set_fill_color(50, 100, 180)
     pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_font("Heebo", "B", 9)
 
     headers = [
-        ("date", "Date"),
-        ("day", "Day"),
-        ("oncall", "On-Call"),
-        ("sess1", "Session 1"),
-        ("sess2", "Session 2"),
+        ("date",   "תאריך"),
+        ("day",    "יום"),
+        ("oncall", "כונן"),
+        ("sess1",  "ססיה 1"),
+        ("sess2",  "ססיה 2"),
     ]
 
     for key, label in headers:
@@ -71,7 +49,7 @@ def generate_pdf(year, month, month_name, days, holiday_set, entry_map, doctors)
     pdf.ln()
 
     pdf.set_text_color(0, 0, 0)
-    pdf.set_font("Helvetica", "", 9)
+    pdf.set_font("Heebo", "", 9)
 
     row_h = 7
 
@@ -81,8 +59,8 @@ def generate_pdf(year, month, month_name, days, holiday_set, entry_map, doctors)
         is_weekend = day.weekday() in (4, 5)
 
         oncall_e = entry_map.get((date_str, "oncall"))
-        sess1_e = entry_map.get((date_str, "session1"))
-        sess2_e = entry_map.get((date_str, "session2"))
+        sess1_e  = entry_map.get((date_str, "session1"))
+        sess2_e  = entry_map.get((date_str, "session2"))
 
         def doctor_name(entry):
             if not entry or not entry.doctor_id:
@@ -92,34 +70,25 @@ def generate_pdf(year, month, month_name, days, holiday_set, entry_map, doctors)
 
         if is_holiday:
             pdf.set_fill_color(255, 220, 150)
-            fill = True
         elif is_weekend:
             pdf.set_fill_color(200, 220, 255)
-            fill = True
         else:
-            pdf.set_fill_color(255, 255, 255)
-            fill = True
+            pdf.set_fill_color(245, 245, 245)
 
         day_name = DAY_NAMES_HE[day.weekday()]
-        note = " (chag)" if is_holiday else ""
+        note = " חג" if is_holiday else ""
 
-        pdf.cell(col_widths["date"], row_h, day.strftime("%d/%m"), border=1, align="C", fill=fill)
-        pdf.cell(col_widths["day"], row_h, day_name[::-1] + note[::-1], border=1, align="C", fill=fill)
-        pdf.cell(col_widths["oncall"], row_h, doctor_name(oncall_e), border=1, align="C", fill=fill)
+        pdf.cell(col_widths["date"],   row_h, day.strftime("%d/%m"),        border=1, align="C", fill=True)
+        pdf.cell(col_widths["day"],    row_h, day_name + note,              border=1, align="C", fill=True)
+        pdf.cell(col_widths["oncall"], row_h, doctor_name(oncall_e),        border=1, align="C", fill=True)
 
-        # Sessions only on session days
         if not is_weekend and not is_holiday:
-            pdf.cell(col_widths["sess1"], row_h, doctor_name(sess1_e), border=1, align="C", fill=fill)
-            pdf.cell(col_widths["sess2"], row_h, doctor_name(sess2_e), border=1, align="C", fill=fill)
+            pdf.cell(col_widths["sess1"], row_h, doctor_name(sess1_e), border=1, align="C", fill=True)
+            pdf.cell(col_widths["sess2"], row_h, doctor_name(sess2_e), border=1, align="C", fill=True)
         else:
-            pdf.set_fill_color(240, 240, 240)
-            pdf.cell(col_widths["sess1"], row_h, "---", border=1, align="C", fill=True)
-            pdf.cell(col_widths["sess2"], row_h, "---", border=1, align="C", fill=True)
-            # restore fill
-            if is_holiday:
-                pdf.set_fill_color(255, 220, 150)
-            elif is_weekend:
-                pdf.set_fill_color(200, 220, 255)
+            pdf.set_fill_color(230, 230, 230)
+            pdf.cell(col_widths["sess1"], row_h, "—", border=1, align="C", fill=True)
+            pdf.cell(col_widths["sess2"], row_h, "—", border=1, align="C", fill=True)
 
         pdf.ln()
 
