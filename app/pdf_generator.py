@@ -31,7 +31,7 @@ def generate_pdf(year, month, month_name, days, holiday_set, entry_map, doctors)
 
     # Title
     pdf.set_font("Heebo", "B", 14)
-    title = bidi(f"לוח קת'לב — {month_name} {year}")
+    title = bidi(f"לוח כוננויות וססיות — {month_name} {year}")
     pdf.cell(0, 10, title, new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.ln(2)
 
