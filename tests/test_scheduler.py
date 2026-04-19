@@ -140,14 +140,18 @@ def make_doctor(id, name, does_oncall=True, does_sessions=False):
 def make_request(doctor_id, unavailable=None, preferred=None, desired_sessions=None):
     req = MagicMock()
     req.doctor_id = doctor_id
-    req.unavailable_dates = unavailable or []
-    req.preferred_dates = preferred or []
+    unavail_set = set(unavailable or [])
+    prefer_set = set(preferred or [])
+    req.unavailable_oncall = unavail_set
+    req.unavailable_session = unavail_set
+    req.preferred_oncall = prefer_set
+    req.preferred_session = prefer_set
     req.desired_sessions = desired_sessions
     return req
 
 
 def zero_counts(doctors):
-    return {d.id: {"weekday_oncalls": 0, "weekend_oncalls": 0, "sessions": 0}
+    return {d.id: {"weekday_oncalls": 0, "weekend_oncalls": 0, "sessions": 0, "session1": 0}
             for d in doctors}
 
 

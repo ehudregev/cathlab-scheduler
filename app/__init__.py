@@ -41,6 +41,7 @@ def _migrate(db):
         ("requests", "no_session_json",   "TEXT DEFAULT '[]'"),
         ("requests", "no_oncall_json",    "TEXT DEFAULT '[]'"),
         ("requests", "no_both_json",      "TEXT DEFAULT '[]'"),
+        ("history_entries", "session1_count", "INTEGER DEFAULT 0"),
     ]
     with db.engine.connect() as conn:
         for table, column, col_def in new_columns:

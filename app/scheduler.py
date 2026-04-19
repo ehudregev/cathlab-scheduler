@@ -69,6 +69,7 @@ def get_cumulative_counts(doctors, month, year, db, HistoryEntry, ScheduleEntry)
             "weekday_oncalls": sum(e.weekday_oncalls for e in entries),
             "weekend_oncalls": sum(e.weekend_oncalls for e in entries),
             "sessions": sum(e.sessions for e in entries),
+            "session1": sum(e.session1_count for e in entries),
         }
     return counts
 
@@ -219,6 +220,10 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     session_budget = {}
     session_assigned_count = defaultdict(int)
 
+    # Load cumulative session1 counts for balancing
+    session_hist = get_cumulative_counts(session_doctors, month, year, db, HistoryEntry, ScheduleEntry)
+    session1_so_far = {doc.id: session_hist[doc.id]["session1"] for doc in session_doctors}
+
     num_session_days = len(session_days)
     for doc in session_doctors:
         r = req_by_doctor.get(doc.id)
@@ -230,9 +235,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
 
     for day in session_days:
         date_str = day.strftime("%Y-%m-%d")
-        slots_filled = []
 
-        # Two passes: first preferred, then fill remaining
         # Available doctors = has budget left and not unavailable
         available = [
             doc for doc in session_doctors
@@ -248,16 +251,25 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                 ratio,
             )
 
-        available_sorted = sorted(available, key=sort_key)
-
-        for doc in available_sorted[:2]:
-            slots_filled.append(doc.id)
+        selected = sorted(available, key=sort_key)[:2]
+        for doc in selected:
             session_assigned_count[doc.id] += 1
+
+        # Assign session1 to whichever of the two has fewer cumulative session1 assignments
+        if len(selected) == 2:
+            doc_a, doc_b = selected
+            if session1_so_far[doc_a.id] <= session1_so_far[doc_b.id]:
+                order = [doc_a.id, doc_b.id]
+            else:
+                order = [doc_b.id, doc_a.id]
+            session1_so_far[order[0]] += 1
+        else:
+            order = [doc.id for doc in selected]
 
         # Fill up to 2 slots
         slot_types = ["session1", "session2"]
         for i, slot_type in enumerate(slot_types):
-            doctor_id = slots_filled[i] if i < len(slots_filled) else None
+            doctor_id = order[i] if i < len(order) else None
             if doctor_id is None:
                 alerts.append(f"לא נמצא רופא לססיה {slot_type} בתאריך {date_str}")
             entries.append({"date_str": date_str, "entry_type": slot_type, "doctor_id": doctor_id})
@@ -280,6 +292,7 @@ def save_schedule_to_history(year, month, db, ScheduleEntry, HistoryEntry, Docto
         weekday_oncalls = 0
         weekend_oncalls = 0
         sessions = 0
+        session1_count = 0
 
         for e in all_entries:
             if e.doctor_id != doc.id:
@@ -291,7 +304,10 @@ def save_schedule_to_history(year, month, db, ScheduleEntry, HistoryEntry, Docto
                     weekend_oncalls += 1
                 else:
                     weekday_oncalls += 1
-            elif e.entry_type in ("session1", "session2"):
+            elif e.entry_type == "session1":
+                sessions += 1
+                session1_count += 1
+            elif e.entry_type == "session2":
                 sessions += 1
 
         if weekday_oncalls + weekend_oncalls + sessions == 0:
@@ -304,12 +320,14 @@ def save_schedule_to_history(year, month, db, ScheduleEntry, HistoryEntry, Docto
             existing.weekday_oncalls = weekday_oncalls
             existing.weekend_oncalls = weekend_oncalls
             existing.sessions = sessions
+            existing.session1_count = session1_count
         else:
             db.session.add(HistoryEntry(
                 doctor_id=doc.id, month=month, year=year,
                 weekday_oncalls=weekday_oncalls,
                 weekend_oncalls=weekend_oncalls,
-                sessions=sessions
+                sessions=sessions,
+                session1_count=session1_count,
             ))
 
     db.session.commit()

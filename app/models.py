@@ -141,6 +141,7 @@ class HistoryEntry(db.Model):
     weekday_oncalls = db.Column(db.Integer, default=0)
     weekend_oncalls = db.Column(db.Integer, default=0)
     sessions = db.Column(db.Integer, default=0)
+    session1_count = db.Column(db.Integer, default=0)
 
     __table_args__ = (
         db.UniqueConstraint("doctor_id", "month", "year", name="uq_history"),
