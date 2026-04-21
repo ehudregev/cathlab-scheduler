@@ -144,15 +144,14 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     # Hard cap: no doctor gets more than ceil(weekends/doctors) unless forced
     weekend_cap = math.ceil(num_weekends / max(num_oncall_docs, 1)) if num_oncall_docs else 0
 
-    # Debug: show starting state for each oncall doctor
+    # Precompute how many weekends each doctor is available for (flexibility score)
+    # Doctors available for fewer weekends are more constrained and get tiebreak priority
+    doc_weekend_availability = {}
     for doc in oncall_doctors:
-        hist = oncall_counts[doc.id]["weekend_units"]
-        unavail_fri_count = sum(
+        doc_weekend_availability[doc.id] = sum(
             1 for (fri, sat) in weekend_units
-            if fri.strftime("%Y-%m-%d") in unavailable[doc.id] or sat.strftime("%Y-%m-%d") in unavailable[doc.id]
-        )
-        alerts.append(
-            f"[אבחון ס״ש] {doc.name}: היסטוריה={hist}, חסום={unavail_fri_count}/{num_weekends} סופי שבוע, מכסה={weekend_cap}"
+            if fri.strftime("%Y-%m-%d") not in unavailable[doc.id]
+            and sat.strftime("%Y-%m-%d") not in unavailable[doc.id]
         )
 
     for (fri, sat) in weekend_units:
@@ -175,9 +174,11 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         under_cap = [doc for doc in available if weekend_count[doc.id] < weekend_cap]
         pool = under_cap if under_cap else available
 
-        # Sort pool: fewest weekends first, then prefer requested date
+        # Sort: fewest weekends assigned first, then most constrained (fewer total available)
+        # tiebreaker, then preference for this date
         pool.sort(key=lambda d: (
             weekend_count[d.id],
+            doc_weekend_availability[d.id],   # fewer options = higher priority
             -(fri_str in preferred[d.id] or sat_str in preferred[d.id])
         ))
 
