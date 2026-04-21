@@ -144,15 +144,29 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     # Hard cap: no doctor gets more than ceil(weekends/doctors) unless forced
     weekend_cap = math.ceil(num_weekends / max(num_oncall_docs, 1)) if num_oncall_docs else 0
 
-    # Precompute how many weekends each doctor is available for (flexibility score)
-    # Doctors available for fewer weekends are more constrained and get tiebreak priority
-    doc_weekend_availability = {}
-    for doc in oncall_doctors:
-        doc_weekend_availability[doc.id] = sum(
-            1 for (fri, sat) in weekend_units
-            if fri.strftime("%Y-%m-%d") not in unavailable[doc.id]
-            and sat.strftime("%Y-%m-%d") not in unavailable[doc.id]
-        )
+    # Precompute availability per weekend slot
+    avail_per_slot = []
+    for (fri, sat) in weekend_units:
+        fri_s = fri.strftime("%Y-%m-%d")
+        sat_s = sat.strftime("%Y-%m-%d")
+        avail_per_slot.append([
+            doc for doc in oncall_doctors
+            if fri_s not in unavailable[doc.id] and sat_s not in unavailable[doc.id]
+        ])
+
+    # Flexibility: total weekends each doctor can do
+    doc_weekend_availability = {
+        doc.id: sum(1 for slot_docs in avail_per_slot if any(d.id == doc.id for d in slot_docs))
+        for doc in oncall_doctors
+    }
+
+    # Exclusive slots: weekends where this doctor is the ONLY one available.
+    # Doctors with more exclusive slots get LOWER priority on contested weekends
+    # (their exclusive slots are guaranteed; don't let them crowd out others).
+    doc_exclusive_slots = {
+        doc.id: sum(1 for slot_docs in avail_per_slot if len(slot_docs) == 1 and slot_docs[0].id == doc.id)
+        for doc in oncall_doctors
+    }
 
     for (fri, sat) in weekend_units:
         fri_str = fri.strftime("%Y-%m-%d")
@@ -174,11 +188,13 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         under_cap = [doc for doc in available if weekend_count[doc.id] < weekend_cap]
         pool = under_cap if under_cap else available
 
-        # Sort: fewest weekends assigned first, then most constrained (fewer total available)
-        # tiebreaker, then preference for this date
+        # Sort: fewest weekends assigned first, then most constrained (fewer total available),
+        # then fewer exclusive slots (doctors with guaranteed-exclusive slots yield contested ones),
+        # then preference for this date
         pool.sort(key=lambda d: (
             weekend_count[d.id],
-            doc_weekend_availability[d.id],   # fewer options = higher priority
+            doc_weekend_availability[d.id],    # fewer options = higher priority
+            doc_exclusive_slots[d.id],         # more exclusive slots = lower priority here
             -(fri_str in preferred[d.id] or sat_str in preferred[d.id])
         ))
 
