@@ -206,13 +206,6 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         entries.append({"date_str": fri_str, "entry_type": "oncall", "doctor_id": assigned.id})
         entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": assigned.id})
 
-        # Diagnostic: show who was available and why this doctor was chosen
-        avail_names = ", ".join(
-            f"{d.name}(count={weekend_count[d.id]-1 if d.id==assigned.id else weekend_count[d.id]},flex={doc_weekend_availability[d.id]})"
-            for d in available
-        )
-        alerts.append(f"[ס״ש {fri_str}] זמינים: {avail_names} → נבחר: {assigned.name}")
-
     # Weekday on-call assignment
     # Sort by total on-calls (weekday + weekend) so weekend duty reduces weekday load
     for d in weekday_oncall_days_all:
