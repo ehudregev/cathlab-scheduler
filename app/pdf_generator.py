@@ -58,7 +58,9 @@ def generate_pdf(year, month, month_name, days, holiday_set, entry_map, doctors)
     pdf.set_text_color(0, 0, 0)
     pdf.set_font("Heebo", "", 9)
 
-    row_h = 7
+    # Dynamic row height: fit all days on one page (A4 landscape = 210mm height)
+    # Fixed overhead: 8 top margin + 10 title cell + 2 ln + 7 header = 27mm
+    row_h = min(7, (210 - 27) / max(len(days), 1))
 
     for day in days:
         date_str = day.strftime("%Y-%m-%d")
