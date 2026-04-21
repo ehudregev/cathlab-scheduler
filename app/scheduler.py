@@ -144,6 +144,17 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     # Hard cap: no doctor gets more than ceil(weekends/doctors) unless forced
     weekend_cap = math.ceil(num_weekends / max(num_oncall_docs, 1)) if num_oncall_docs else 0
 
+    # Debug: show starting state for each oncall doctor
+    for doc in oncall_doctors:
+        hist = oncall_counts[doc.id]["weekend_units"]
+        unavail_fri_count = sum(
+            1 for (fri, sat) in weekend_units
+            if fri.strftime("%Y-%m-%d") in unavailable[doc.id] or sat.strftime("%Y-%m-%d") in unavailable[doc.id]
+        )
+        alerts.append(
+            f"[אבחון ס״ש] {doc.name}: היסטוריה={hist}, חסום={unavail_fri_count}/{num_weekends} סופי שבוע, מכסה={weekend_cap}"
+        )
+
     for (fri, sat) in weekend_units:
         fri_str = fri.strftime("%Y-%m-%d")
         sat_str = sat.strftime("%Y-%m-%d")
