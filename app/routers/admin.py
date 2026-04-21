@@ -25,7 +25,7 @@ def current_month_year():
 def submission_target_month():
     """Returns the month doctors are currently submitting for."""
     today = date.today()
-    if today.day <= 15:
+    if today.day <= 25:
         if today.month == 12:
             return 1, today.year + 1
         return today.month + 1, today.year
@@ -97,10 +97,10 @@ def calc_fairness(doctors, entries, year, month, holiday_set):
     """
     stats = {d.id: {
         "month_weekday_oncalls": 0,
-        "month_weekend_oncalls": 0,
+        "month_weekend_units": 0,
         "month_sessions": 0,
         "annual_weekday_oncalls": 0,
-        "annual_weekend_oncalls": 0,
+        "annual_weekend_units": 0,
         "annual_sessions": 0,
     } for d in doctors}
 
@@ -110,11 +110,14 @@ def calc_fairness(doctors, entries, year, month, holiday_set):
             continue
         d = dt.fromisoformat(e.date_str)
         if e.entry_type == "oncall":
-            # Special day = Fri, Sat, holiday, or holiday eve
-            is_special = d.weekday() in (4, 5) or e.date_str in holiday_set
-            if is_special:
-                stats[e.doctor_id]["month_weekend_oncalls"] += 1
-            else:
+            is_friday = d.weekday() == 4
+            is_saturday = d.weekday() == 5
+            is_holiday_weekday = e.date_str in holiday_set and not is_friday and not is_saturday
+            if is_friday or is_holiday_weekday:
+                # Count Friday (representing a Fri+Sat unit) and holiday weekdays as 1 unit each
+                stats[e.doctor_id]["month_weekend_units"] += 1
+            elif not is_saturday:
+                # Saturday already counted with Friday; regular weekdays count normally
                 stats[e.doctor_id]["month_weekday_oncalls"] += 1
         elif e.entry_type in ("session1", "session2"):
             stats[e.doctor_id]["month_sessions"] += 1
@@ -128,13 +131,14 @@ def calc_fairness(doctors, entries, year, month, holiday_set):
         if h.doctor_id not in stats:
             continue
         stats[h.doctor_id]["annual_weekday_oncalls"] += h.weekday_oncalls
-        stats[h.doctor_id]["annual_weekend_oncalls"] += h.weekend_oncalls
+        # Use weekend_units if available; fall back to weekend_oncalls // 2 for old data
+        stats[h.doctor_id]["annual_weekend_units"] += (h.weekend_units or (h.weekend_oncalls // 2))
         stats[h.doctor_id]["annual_sessions"] += h.sessions
 
     # Add current month to annual totals
     for doc_id, s in stats.items():
         s["annual_weekday_oncalls"] += s["month_weekday_oncalls"]
-        s["annual_weekend_oncalls"] += s["month_weekend_oncalls"]
+        s["annual_weekend_units"] += s["month_weekend_units"]
         s["annual_sessions"] += s["month_sessions"]
 
     return stats
