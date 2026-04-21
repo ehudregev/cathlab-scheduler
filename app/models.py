@@ -140,6 +140,7 @@ class HistoryEntry(db.Model):
     year = db.Column(db.Integer, nullable=False)
     weekday_oncalls = db.Column(db.Integer, default=0)
     weekend_oncalls = db.Column(db.Integer, default=0)
+    weekend_units = db.Column(db.Integer, default=0)
     sessions = db.Column(db.Integer, default=0)
     session1_count = db.Column(db.Integer, default=0)
 

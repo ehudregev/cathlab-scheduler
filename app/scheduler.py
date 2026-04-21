@@ -48,7 +48,7 @@ def get_weekend_units(days):
     return units
 
 
-def get_cumulative_counts(doctors, month, year, db, HistoryEntry, ScheduleEntry):
+def get_cumulative_counts(doctors, month, year, _db, HistoryEntry, _ScheduleEntry):
     """
     Get cumulative historical counts for each doctor up to (but not including) this month.
     Returns dict: {doctor_id: {"weekday_oncalls": int, "weekend_oncalls": int, "sessions": int}}
@@ -68,6 +68,7 @@ def get_cumulative_counts(doctors, month, year, db, HistoryEntry, ScheduleEntry)
         counts[doc.id] = {
             "weekday_oncalls": sum(e.weekday_oncalls for e in entries),
             "weekend_oncalls": sum(e.weekend_oncalls for e in entries),
+            "weekend_units": sum(e.weekend_units or 0 for e in entries),
             "sessions": sum(e.sessions for e in entries),
             "session1": sum(e.session1_count for e in entries),
         }
@@ -130,9 +131,10 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
 
     # Weekend on-call assignment
     weekend_assigned = {}
-    weekend_count = {d.id: oncall_counts[d.id]["weekend_oncalls"] for d in oncall_doctors}
+    # weekend_units = number of fri+sat pairs + holiday weekday oncalls (each counts as 1 unit)
+    weekend_count = {d.id: oncall_counts[d.id]["weekend_units"] for d in oncall_doctors}
     total_oncall_count = {
-        d.id: oncall_counts[d.id]["weekday_oncalls"] + oncall_counts[d.id]["weekend_oncalls"]
+        d.id: oncall_counts[d.id]["weekday_oncalls"] + oncall_counts[d.id]["weekend_units"]
         for d in oncall_doctors
     }
 
@@ -291,6 +293,7 @@ def save_schedule_to_history(year, month, db, ScheduleEntry, HistoryEntry, Docto
     for doc in all_doctors:
         weekday_oncalls = 0
         weekend_oncalls = 0
+        weekend_units = 0
         sessions = 0
         session1_count = 0
 
@@ -299,9 +302,20 @@ def save_schedule_to_history(year, month, db, ScheduleEntry, HistoryEntry, Docto
                 continue
             d = dt.fromisoformat(e.date_str)
             if e.entry_type == "oncall":
-                is_special = d.weekday() in (4, 5) or e.date_str in holiday_set
-                if is_special:
+                is_friday = d.weekday() == 4
+                is_saturday = d.weekday() == 5
+                is_holiday_weekday = e.date_str in holiday_set and not is_friday and not is_saturday
+                if is_friday:
+                    # Friday = one weekend unit (Saturday is paired and not counted separately)
                     weekend_oncalls += 1
+                    weekend_units += 1
+                elif is_saturday:
+                    # Saturday is already counted with Friday
+                    weekend_oncalls += 1
+                elif is_holiday_weekday:
+                    # Holiday on a regular weekday = special unit
+                    weekend_oncalls += 1
+                    weekend_units += 1
                 else:
                     weekday_oncalls += 1
             elif e.entry_type == "session1":
@@ -319,6 +333,7 @@ def save_schedule_to_history(year, month, db, ScheduleEntry, HistoryEntry, Docto
         if existing:
             existing.weekday_oncalls = weekday_oncalls
             existing.weekend_oncalls = weekend_oncalls
+            existing.weekend_units = weekend_units
             existing.sessions = sessions
             existing.session1_count = session1_count
         else:
@@ -326,6 +341,7 @@ def save_schedule_to_history(year, month, db, ScheduleEntry, HistoryEntry, Docto
                 doctor_id=doc.id, month=month, year=year,
                 weekday_oncalls=weekday_oncalls,
                 weekend_oncalls=weekend_oncalls,
+                weekend_units=weekend_units,
                 sessions=sessions,
                 session1_count=session1_count,
             ))

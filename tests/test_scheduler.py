@@ -151,7 +151,7 @@ def make_request(doctor_id, unavailable=None, preferred=None, desired_sessions=N
 
 
 def zero_counts(doctors):
-    return {d.id: {"weekday_oncalls": 0, "weekend_oncalls": 0, "sessions": 0, "session1": 0}
+    return {d.id: {"weekday_oncalls": 0, "weekend_oncalls": 0, "weekend_units": 0, "sessions": 0, "session1": 0}
             for d in doctors}
 
 
