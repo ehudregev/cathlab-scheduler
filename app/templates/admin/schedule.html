@@ -51,8 +51,10 @@
       <thead class="bg-gray-100">
         <tr>
           <th class="px-3 py-2">רופא</th>
-          <th class="px-3 py-2 text-center">כוננויות החודש</th>
-          <th class="px-3 py-2 text-center">כוננויות שנתי</th>
+          <th class="px-3 py-2 text-center">חול החודש</th>
+          <th class="px-3 py-2 text-center">ס״ש החודש</th>
+          <th class="px-3 py-2 text-center">חול שנתי</th>
+          <th class="px-3 py-2 text-center">ס״ש שנתי</th>
         </tr>
       </thead>
       <tbody class="divide-y">
@@ -60,8 +62,10 @@
         {% set s = fairness.get(doc.id, {}) %}
         <tr class="hover:bg-gray-50">
           <td class="px-3 py-2 font-medium">{{ doc.name }}</td>
-          <td class="px-3 py-2 text-center font-semibold">{{ s.get('month_weekday_oncalls', 0) + s.get('month_weekend_oncalls', 0) }}</td>
-          <td class="px-3 py-2 text-center font-bold text-blue-700">{{ s.get('annual_weekday_oncalls', 0) + s.get('annual_weekend_oncalls', 0) }}</td>
+          <td class="px-3 py-2 text-center">{{ s.get('month_weekday_oncalls', 0) }}</td>
+          <td class="px-3 py-2 text-center">{{ s.get('month_weekend_oncalls', 0) }}</td>
+          <td class="px-3 py-2 text-center font-semibold text-blue-700">{{ s.get('annual_weekday_oncalls', 0) }}</td>
+          <td class="px-3 py-2 text-center font-semibold text-blue-700">{{ s.get('annual_weekend_oncalls', 0) }}</td>
         </tr>
         {% endfor %}
       </tbody>
