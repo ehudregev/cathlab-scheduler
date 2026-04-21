@@ -221,9 +221,9 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
 
         pool.sort(key=lambda d: (
             weekend_count[d.id],
-            _run_after(oncall_assigned[d.id], {fri_str, sat_str}) >= 3,  # soft: avoid 3-run
             doc_weekend_availability[d.id],
             doc_exclusive_slots[d.id],
+            _run_after(oncall_assigned[d.id], {fri_str, sat_str}) >= 3,  # soft: avoid 3-run
             -(fri_str in preferred[d.id] or sat_str in preferred[d.id])
         ))
 
@@ -253,15 +253,15 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
 
         if is_special:
             candidates = sorted(eligible, key=lambda doc: (
-                _run_after(oncall_assigned[doc.id], {date_str}) >= 3,  # soft: avoid 3-run
                 weekend_count[doc.id],
                 total_oncall_count[doc.id],
+                _run_after(oncall_assigned[doc.id], {date_str}) >= 3,  # soft: avoid 3-run
                 -(date_str in preferred[doc.id])
             ))
         else:
             candidates = sorted(eligible, key=lambda doc: (
-                _run_after(oncall_assigned[doc.id], {date_str}) >= 3,  # soft: avoid 3-run
                 total_oncall_count[doc.id],
+                _run_after(oncall_assigned[doc.id], {date_str}) >= 3,  # soft: avoid 3-run
                 -(date_str in preferred[doc.id])
             ))
 
