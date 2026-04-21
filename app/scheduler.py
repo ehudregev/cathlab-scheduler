@@ -7,6 +7,28 @@ import holidays as holidays_lib
 from collections import defaultdict
 
 
+def _max_run(date_strs):
+    """Return the longest consecutive-calendar-day run in a set of date strings."""
+    if not date_strs:
+        return 0
+    dates = sorted(date.fromisoformat(s) for s in date_strs)
+    run = 1
+    max_run = 1
+    for i in range(1, len(dates)):
+        if (dates[i] - dates[i - 1]).days == 1:
+            run += 1
+            if run > max_run:
+                max_run = run
+        else:
+            run = 1
+    return max_run
+
+
+def _run_after(existing, new_dates):
+    """Max consecutive run after adding new_dates (iterable of str) to existing set."""
+    return _max_run(existing | set(new_dates))
+
+
 def get_israeli_holidays(year):
     """Return a set of date strings (YYYY-MM-DD) that are Israeli holidays or holiday eves."""
     il_holidays = holidays_lib.Israel(years=year)
@@ -168,33 +190,40 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         for doc in oncall_doctors
     }
 
+    # Track assigned oncall dates per doctor for consecutive-day checking
+    oncall_assigned = defaultdict(set)
+
     for (fri, sat) in weekend_units:
         fri_str = fri.strftime("%Y-%m-%d")
         sat_str = sat.strftime("%Y-%m-%d")
 
-        # Filter to available doctors only
+        # Hard exclude: not available OR would create 4+ consecutive days
         available = [
             doc for doc in oncall_doctors
-            if fri_str not in unavailable[doc.id] and sat_str not in unavailable[doc.id]
+            if fri_str not in unavailable[doc.id]
+            and sat_str not in unavailable[doc.id]
+            and _run_after(oncall_assigned[doc.id], {fri_str, sat_str}) < 4
         ]
-
+        # Fallback: ignore consecutive constraint if it leaves no one
+        if not available:
+            available = [
+                doc for doc in oncall_doctors
+                if fri_str not in unavailable[doc.id] and sat_str not in unavailable[doc.id]
+            ]
         if not available:
             alerts.append(f"לא נמצא כונן זמין לסוף שבוע {fri_str}")
             entries.append({"date_str": fri_str, "entry_type": "oncall", "doctor_id": None})
             entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": None})
             continue
 
-        # Prefer doctors under the cap; only exceed cap if all available are at/above it
         under_cap = [doc for doc in available if weekend_count[doc.id] < weekend_cap]
         pool = under_cap if under_cap else available
 
-        # Sort: fewest weekends assigned first, then most constrained (fewer total available),
-        # then fewer exclusive slots (doctors with guaranteed-exclusive slots yield contested ones),
-        # then preference for this date
         pool.sort(key=lambda d: (
             weekend_count[d.id],
-            doc_weekend_availability[d.id],    # fewer options = higher priority
-            doc_exclusive_slots[d.id],         # more exclusive slots = lower priority here
+            _run_after(oncall_assigned[d.id], {fri_str, sat_str}) >= 3,  # soft: avoid 3-run
+            doc_weekend_availability[d.id],
+            doc_exclusive_slots[d.id],
             -(fri_str in preferred[d.id] or sat_str in preferred[d.id])
         ))
 
@@ -203,48 +232,45 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         weekend_assigned[sat_str] = assigned.id
         weekend_count[assigned.id] += 1
         total_oncall_count[assigned.id] += 1
+        oncall_assigned[assigned.id].update({fri_str, sat_str})
         entries.append({"date_str": fri_str, "entry_type": "oncall", "doctor_id": assigned.id})
         entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": assigned.id})
 
     # Weekday on-call assignment
-    # Sort by total on-calls (weekday + weekend) so weekend duty reduces weekday load
     for d in weekday_oncall_days_all:
         date_str = d.strftime("%Y-%m-%d")
-
         is_special = d.weekday() in (4, 5) or date_str in holiday_set
 
+        # Hard exclude: not available OR would create 4+ consecutive days
+        eligible = [
+            doc for doc in oncall_doctors
+            if date_str not in unavailable[doc.id]
+            and _run_after(oncall_assigned[doc.id], {date_str}) < 4
+        ]
+        # Fallback: ignore consecutive constraint if it leaves no one
+        if not eligible:
+            eligible = [doc for doc in oncall_doctors if date_str not in unavailable[doc.id]]
+
         if is_special:
-            # Holiday/eve/Fri/Sat: sort by weekend count first, then total
-            candidates = sorted(
-                oncall_doctors,
-                key=lambda doc: (
-                    date_str in unavailable[doc.id],
-                    weekend_count[doc.id],
-                    total_oncall_count[doc.id],
-                    -(date_str in preferred[doc.id])
-                )
-            )
+            candidates = sorted(eligible, key=lambda doc: (
+                _run_after(oncall_assigned[doc.id], {date_str}) >= 3,  # soft: avoid 3-run
+                weekend_count[doc.id],
+                total_oncall_count[doc.id],
+                -(date_str in preferred[doc.id])
+            ))
         else:
-            # Regular weekday: sort by total count
-            candidates = sorted(
-                oncall_doctors,
-                key=lambda doc: (
-                    date_str in unavailable[doc.id],
-                    total_oncall_count[doc.id],
-                    -(date_str in preferred[doc.id])
-                )
-            )
+            candidates = sorted(eligible, key=lambda doc: (
+                _run_after(oncall_assigned[doc.id], {date_str}) >= 3,  # soft: avoid 3-run
+                total_oncall_count[doc.id],
+                -(date_str in preferred[doc.id])
+            ))
 
-        assigned = None
-        for doc in candidates:
-            if date_str not in unavailable[doc.id]:
-                assigned = doc
-                break
-
-        if assigned:
+        if candidates:
+            assigned = candidates[0]
             total_oncall_count[assigned.id] += 1
             if is_special:
                 weekend_count[assigned.id] += 1
+            oncall_assigned[assigned.id].add(date_str)
             entries.append({"date_str": date_str, "entry_type": "oncall", "doctor_id": assigned.id})
         else:
             alerts.append(f"לא נמצא כונן זמין ליום {date_str}")
