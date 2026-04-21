@@ -9,7 +9,7 @@ doctor_bp = Blueprint("doctor", __name__)
 
 def get_target_month():
     today = date.today()
-    if today.day <= 15:
+    if today.day <= 25:
         if today.month == 12:
             return 1, today.year + 1
         return today.month + 1, today.year
