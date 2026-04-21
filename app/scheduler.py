@@ -138,37 +138,45 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         for d in oncall_doctors
     }
 
+    num_weekends = len(weekend_units)
+    num_oncall_docs = len(oncall_doctors)
+    import math
+    # Hard cap: no doctor gets more than ceil(weekends/doctors) unless forced
+    weekend_cap = math.ceil(num_weekends / max(num_oncall_docs, 1)) if num_oncall_docs else 0
+
     for (fri, sat) in weekend_units:
         fri_str = fri.strftime("%Y-%m-%d")
         sat_str = sat.strftime("%Y-%m-%d")
 
-        # Sort doctors by fewest weekend oncalls, then prefer those who prefer this date
-        candidates = sorted(
-            oncall_doctors,
-            key=lambda d: (
-                fri_str in unavailable[d.id] or sat_str in unavailable[d.id],  # unavailable last
-                weekend_count[d.id],  # fewest oncalls first
-                -(fri_str in preferred[d.id] or sat_str in preferred[d.id])  # prefer preferred
-            )
-        )
+        # Filter to available doctors only
+        available = [
+            doc for doc in oncall_doctors
+            if fri_str not in unavailable[doc.id] and sat_str not in unavailable[doc.id]
+        ]
 
-        assigned = None
-        for doc in candidates:
-            if fri_str not in unavailable[doc.id] and sat_str not in unavailable[doc.id]:
-                assigned = doc
-                break
-
-        if assigned:
-            weekend_assigned[fri_str] = assigned.id
-            weekend_assigned[sat_str] = assigned.id
-            weekend_count[assigned.id] += 1
-            total_oncall_count[assigned.id] += 1  # each weekend unit = 1 total oncall
-            entries.append({"date_str": fri_str, "entry_type": "oncall", "doctor_id": assigned.id})
-            entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": assigned.id})
-        else:
+        if not available:
             alerts.append(f"לא נמצא כונן זמין לסוף שבוע {fri_str}")
             entries.append({"date_str": fri_str, "entry_type": "oncall", "doctor_id": None})
             entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": None})
+            continue
+
+        # Prefer doctors under the cap; only exceed cap if all available are at/above it
+        under_cap = [doc for doc in available if weekend_count[doc.id] < weekend_cap]
+        pool = under_cap if under_cap else available
+
+        # Sort pool: fewest weekends first, then prefer requested date
+        pool.sort(key=lambda d: (
+            weekend_count[d.id],
+            -(fri_str in preferred[d.id] or sat_str in preferred[d.id])
+        ))
+
+        assigned = pool[0]
+        weekend_assigned[fri_str] = assigned.id
+        weekend_assigned[sat_str] = assigned.id
+        weekend_count[assigned.id] += 1
+        total_oncall_count[assigned.id] += 1
+        entries.append({"date_str": fri_str, "entry_type": "oncall", "doctor_id": assigned.id})
+        entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": assigned.id})
 
     # Weekday on-call assignment
     # Sort by total on-calls (weekday + weekend) so weekend duty reduces weekday load

@@ -13,12 +13,14 @@
 
 <div class="flex items-center justify-between mb-6">
   <h1 class="text-2xl font-bold">לוח {{ month_name }} {{ year }}</h1>
-  <div class="flex gap-3">
+  <div class="flex gap-3 flex-wrap">
     {% if status and status.status == 'draft' %}
     <form action="/admin/schedule/{{ year }}/{{ month }}/publish" method="POST">
       <button class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">פרסם לוח</button>
     </form>
     {% endif %}
+    <a href="/admin/requests/{{ year }}/{{ month }}"
+       class="bg-purple-100 text-purple-800 px-4 py-2 rounded-lg hover:bg-purple-200 font-medium">בקשות רופאים</a>
     <a href="/admin/schedule/{{ year }}/{{ month }}/pdf"
        class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">הורד PDF</a>
     <form action="/admin/schedule/{{ year }}/{{ month }}/generate" method="POST">
