@@ -352,6 +352,22 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             and _run_after(session_assigned_dates[doc.id], {date_str}) < 3
             and _has_effective_budget(doc)
         ]
+        # Debug: explain why specific doctors are missing from available
+        for doc in session_doctors:
+            if doc not in available:
+                if date_str in unavailable_session[doc.id]:
+                    reason = "לא זמין"
+                elif _run_after(session_assigned_dates[doc.id], {date_str}) >= 3:
+                    reason = "3 ברצף"
+                elif not _has_effective_budget(doc):
+                    eff = session_budget[doc.id] - (doctor_reserve[doc.id] if not date_is_scarce else 0)
+                    reason = f"רזרבה (assigned={session_assigned_count[doc.id]}, budget={session_budget[doc.id]}, reserve={doctor_reserve[doc.id]}, effective={eff}, scarce={date_is_scarce})"
+                elif session_assigned_count[doc.id] >= session_budget[doc.id]:
+                    reason = f"מיצה תקציב ({session_assigned_count[doc.id]}/{session_budget[doc.id]})"
+                else:
+                    reason = "?"
+                alerts.append(f"[DEBUG {date_str}] {doc.name} לא זמין: {reason}")
+
         # Fallback: if reserve leaves too few doctors, relax reserve (keep other constraints)
         if len(available) < 2:
             available = [
