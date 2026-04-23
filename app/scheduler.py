@@ -311,16 +311,19 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             and date_str not in unavailable_session[doc.id]
         ]
 
-        # Sort: weekly count first (prefer < 2 this week), then preference, then monthly ratio
         def sort_key(doc):
             ratio = session_assigned_count[doc.id] / max(session_budget[doc.id], 1)
             return (
-                week_session_count[doc.id][week_key],  # fewer sessions this week = higher priority
                 -(date_str in preferred_session[doc.id]),
                 ratio,
             )
 
-        selected = sorted(available, key=sort_key)[:2]
+        # Fill 2 slots: prefer doctors with < 2 sessions this week; fall back to those with 2 (= 3rd)
+        under_cap = [d for d in available if week_session_count[d.id][week_key] < 2]
+        over_cap  = [d for d in available if week_session_count[d.id][week_key] >= 2]
+        selected = sorted(under_cap, key=sort_key)[:2]
+        if len(selected) < 2:
+            selected += sorted(over_cap, key=sort_key)[:2 - len(selected)]
         # If only one doctor available and it's דני אליאן, don't assign (needs a partner)
         if len(selected) == 1 and selected[0].name == "דני אליאן":
             selected = []
