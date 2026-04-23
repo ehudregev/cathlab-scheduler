@@ -297,13 +297,20 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             # No request or no preference — give a fair default share
             session_budget[doc.id] = max(1, round(num_session_days * 2 / max(len(session_doctors), 1)))
 
-    # Track sessions per doctor per ISO week and per day for constraints
+    # Track sessions per doctor per Israeli work week (Sun–Thu) and per day for constraints
     week_session_count = defaultdict(lambda: defaultdict(int))
     session_assigned_dates = defaultdict(set)  # for consecutive-day check
 
+    def israeli_week_key(d):
+        """Return the date of the Sunday that starts this Israeli work week."""
+        wd = d.weekday()
+        if wd == 6:  # Sunday — week starts today
+            return d
+        return d - timedelta(days=wd + 1)  # Mon(0)→-1, Tue(1)→-2, ..., Thu(3)→-4
+
     for day in session_days:
         date_str = day.strftime("%Y-%m-%d")
-        week_key = day.isocalendar()[:2]  # (year, iso_week)
+        week_key = israeli_week_key(day)
 
         # Available doctors = has budget left and not unavailable
         available = [
