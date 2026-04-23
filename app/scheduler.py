@@ -297,8 +297,9 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             # No request or no preference — give a fair default share
             session_budget[doc.id] = max(1, round(num_session_days * 2 / max(len(session_doctors), 1)))
 
-    # Track sessions per doctor per ISO week for the weekly cap constraint
+    # Track sessions per doctor per ISO week and per day for constraints
     week_session_count = defaultdict(lambda: defaultdict(int))
+    session_assigned_dates = defaultdict(set)  # for consecutive-day check
 
     for day in session_days:
         date_str = day.strftime("%Y-%m-%d")
@@ -311,6 +312,11 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             and date_str not in unavailable_session[doc.id]
         ]
 
+        # Hard exclude: would create 3 consecutive session days
+        no_consec = [d for d in available if _run_after(session_assigned_dates[d.id], {date_str}) < 3]
+        if no_consec:
+            available = no_consec
+
         def sort_key(doc):
             ratio = session_assigned_count[doc.id] / max(session_budget[doc.id], 1)
             return (
@@ -318,18 +324,26 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                 ratio,
             )
 
-        # Fill 2 slots: prefer doctors with < 2 sessions this week; fall back to those with 2 (= 3rd)
-        under_cap = [d for d in available if week_session_count[d.id][week_key] < 2]
-        over_cap  = [d for d in available if week_session_count[d.id][week_key] >= 2]
-        selected = sorted(under_cap, key=sort_key)[:2]
+        # Fill 2 slots with strict weekly cap:
+        #   Tier 1: < 2 sessions this week (preferred)
+        #   Tier 2: == 2 sessions this week (fallback — gives 3rd, allowed only if no other option)
+        #   Tier 3: > 2 sessions this week (last resort)
+        tier1 = [d for d in available if week_session_count[d.id][week_key] < 2]
+        tier2 = [d for d in available if week_session_count[d.id][week_key] == 2]
+        tier3 = [d for d in available if week_session_count[d.id][week_key] > 2]
+        selected = sorted(tier1, key=sort_key)[:2]
         if len(selected) < 2:
-            selected += sorted(over_cap, key=sort_key)[:2 - len(selected)]
+            selected += sorted(tier2, key=sort_key)[:2 - len(selected)]
+        if len(selected) < 2:
+            selected += sorted(tier3, key=sort_key)[:2 - len(selected)]
+
         # If only one doctor available and it's דני אליאן, don't assign (needs a partner)
         if len(selected) == 1 and selected[0].name == "דני אליאן":
             selected = []
         for doc in selected:
             session_assigned_count[doc.id] += 1
             week_session_count[doc.id][week_key] += 1
+            session_assigned_dates[doc.id].add(date_str)
 
         # Assign session1 to whichever of the two has fewer cumulative session1 assignments
         if len(selected) == 2:
