@@ -297,8 +297,12 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             # No request or no preference — give a fair default share
             session_budget[doc.id] = max(1, round(num_session_days * 2 / max(len(session_doctors), 1)))
 
+    # Track sessions per doctor per ISO week for the weekly cap constraint
+    week_session_count = defaultdict(lambda: defaultdict(int))
+
     for day in session_days:
         date_str = day.strftime("%Y-%m-%d")
+        week_key = day.isocalendar()[:2]  # (year, iso_week)
 
         # Available doctors = has budget left and not unavailable
         available = [
@@ -307,10 +311,11 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             and date_str not in unavailable_session[doc.id]
         ]
 
-        # Sort: prefer doctors who prefer this date, then by (assigned/budget ratio) asc
+        # Sort: weekly count first (prefer < 2 this week), then preference, then monthly ratio
         def sort_key(doc):
             ratio = session_assigned_count[doc.id] / max(session_budget[doc.id], 1)
             return (
+                week_session_count[doc.id][week_key],  # fewer sessions this week = higher priority
                 -(date_str in preferred_session[doc.id]),
                 ratio,
             )
@@ -318,6 +323,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         selected = sorted(available, key=sort_key)[:2]
         for doc in selected:
             session_assigned_count[doc.id] += 1
+            week_session_count[doc.id][week_key] += 1
 
         # Assign session1 to whichever of the two has fewer cumulative session1 assignments
         if len(selected) == 2:
