@@ -321,6 +321,9 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             )
 
         selected = sorted(available, key=sort_key)[:2]
+        # If only one doctor available and it's דני אליאן, don't assign (needs a partner)
+        if len(selected) == 1 and selected[0].name == "דני אליאן":
+            selected = []
         for doc in selected:
             session_assigned_count[doc.id] += 1
             week_session_count[doc.id][week_key] += 1
