@@ -297,6 +297,26 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             # No request or no preference — give a fair default share
             session_budget[doc.id] = max(1, round(num_session_days * 2 / max(len(session_doctors), 1)))
 
+    # Pre-scan: identify scarce days and reserve doctor capacity for them
+    # A "scarce day" has few initially-available doctors (ignoring budget/consecutive).
+    SCARCITY_THRESHOLD = 3
+    day_init_avail = {}
+    for fd in session_days:
+        fds = fd.strftime("%Y-%m-%d")
+        day_init_avail[fds] = [
+            doc for doc in session_doctors
+            if fds not in unavailable_session[doc.id]
+        ]
+
+    doctor_reserve = defaultdict(int)
+    for fds, docs in day_init_avail.items():
+        if len(docs) <= SCARCITY_THRESHOLD:
+            for doc in docs:
+                doctor_reserve[doc.id] += 1
+    # Cap reserve so a doctor can always do at least 1 non-scarce session
+    for doc in session_doctors:
+        doctor_reserve[doc.id] = min(doctor_reserve[doc.id], max(session_budget[doc.id] - 1, 0))
+
     # Track sessions per doctor per Israeli work week (Sun–Thu) and per day for constraints
     week_session_count = defaultdict(lambda: defaultdict(int))
     session_assigned_dates = defaultdict(set)  # for consecutive-day check
@@ -311,18 +331,37 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     for day in session_days:
         date_str = day.strftime("%Y-%m-%d")
         week_key = israeli_week_key(day)
+        date_is_scarce = len(day_init_avail[date_str]) <= SCARCITY_THRESHOLD
 
-        # Available doctors = has budget left and not unavailable
+        # Available doctors: not unavailable, no 3 consecutive, has effective budget.
+        # On non-scarce days, reserve capacity for doctors needed on scarce days.
+        def _has_effective_budget(doc):
+            budget = session_budget[doc.id]
+            if not date_is_scarce:
+                budget -= doctor_reserve[doc.id]
+            return session_assigned_count[doc.id] < budget
+
         available = [
             doc for doc in session_doctors
-            if session_assigned_count[doc.id] < session_budget[doc.id]
-            and date_str not in unavailable_session[doc.id]
+            if date_str not in unavailable_session[doc.id]
+            and _run_after(session_assigned_dates[doc.id], {date_str}) < 3
+            and _has_effective_budget(doc)
         ]
-
-        # Hard exclude: would create 3 consecutive session days
-        no_consec = [d for d in available if _run_after(session_assigned_dates[d.id], {date_str}) < 3]
-        if no_consec:
-            available = no_consec
+        # Fallback: if reserve leaves too few doctors, relax reserve (keep other constraints)
+        if len(available) < 2:
+            available = [
+                doc for doc in session_doctors
+                if date_str not in unavailable_session[doc.id]
+                and _run_after(session_assigned_dates[doc.id], {date_str}) < 3
+                and session_assigned_count[doc.id] < session_budget[doc.id]
+            ]
+        # Fallback: relax consecutive constraint if still no one
+        if not available:
+            available = [
+                doc for doc in session_doctors
+                if date_str not in unavailable_session[doc.id]
+                and session_assigned_count[doc.id] < session_budget[doc.id]
+            ]
 
         def sort_key(doc):
             ratio = session_assigned_count[doc.id] / max(session_budget[doc.id], 1)
