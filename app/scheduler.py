@@ -327,6 +327,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         def sort_key(doc):
             ratio = session_assigned_count[doc.id] / max(session_budget[doc.id], 1)
             return (
+                week_session_count[doc.id][week_key],  # fewer this week = higher priority
                 -(date_str in preferred_session[doc.id]),
                 ratio,
             )
