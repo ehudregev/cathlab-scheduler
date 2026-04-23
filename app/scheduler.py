@@ -128,6 +128,8 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     preferred_oncall = {}
     preferred_session = {}
 
+    allow_triple_session = {}  # doc.id -> bool (True = allowed, False = not allowed)
+
     for doc in oncall_doctors + session_doctors:
         r = req_by_doctor.get(doc.id)
         if r:
@@ -135,11 +137,14 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             unavailable_session[doc.id] = r.unavailable_session
             preferred_oncall[doc.id] = r.preferred_oncall
             preferred_session[doc.id] = r.preferred_session
+            # None (unanswered) treated as allowed for backwards compat
+            allow_triple_session[doc.id] = r.allow_triple_session is not False
         else:
             unavailable_oncall[doc.id] = set()
             unavailable_session[doc.id] = set()
             preferred_oncall[doc.id] = set()
             preferred_session[doc.id] = set()
+            allow_triple_session[doc.id] = True
 
     # Backwards compat alias for on-call scheduling
     unavailable = unavailable_oncall
@@ -377,7 +382,9 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         #   Tier 3: > 2 sessions this week (last resort)
         tier1 = [d for d in available if week_session_count[d.id][week_key] < 2]
         tier2 = [d for d in available if week_session_count[d.id][week_key] == 2]
-        tier3 = [d for d in available if week_session_count[d.id][week_key] > 2]
+        # tier2/tier3 only include doctors who allow triple sessions
+        tier2 = [d for d in tier2 if allow_triple_session[d.id]]
+        tier3 = [d for d in available if week_session_count[d.id][week_key] > 2 and allow_triple_session[d.id]]
         selected = sorted(tier1, key=sort_key)[:2]
         if len(selected) < 2:
             needed = 2 - len(selected)

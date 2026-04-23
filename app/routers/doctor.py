@@ -75,6 +75,8 @@ def submit_request(token):
     no_oncall = request.form.getlist("no_oncall[]")
     no_both = request.form.getlist("no_both[]")
     desired_sessions = request.form.get("desired_sessions", type=int)
+    triple_raw = request.form.get("allow_triple_session")
+    allow_triple = True if triple_raw == "yes" else (False if triple_raw == "no" else None)
 
     existing = Request.query.filter_by(
         doctor_id=doctor.id, month=month, year=year
@@ -89,6 +91,7 @@ def submit_request(token):
         existing.no_both = no_both
         if doctor.does_sessions:
             existing.desired_sessions = desired_sessions
+            existing.allow_triple_session = allow_triple
         existing.submitted_at = datetime.utcnow()
     else:
         req = Request(
@@ -96,6 +99,7 @@ def submit_request(token):
             month=month,
             year=year,
             desired_sessions=desired_sessions if doctor.does_sessions else None,
+            allow_triple_session=allow_triple if doctor.does_sessions else None,
         )
         req.want_session = want_session
         req.want_oncall = want_oncall

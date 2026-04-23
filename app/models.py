@@ -23,6 +23,7 @@ class Request(db.Model):
     month = db.Column(db.Integer, nullable=False)
     year = db.Column(db.Integer, nullable=False)
     desired_sessions = db.Column(db.Integer, nullable=True)
+    allow_triple_session = db.Column(db.Boolean, nullable=True)  # None=not answered, True=yes, False=no
     # Per-date preferences (JSON lists of date strings YYYY-MM-DD)
     want_session_json = db.Column(db.Text, default="[]")       # רוצה ססיה
     want_oncall_json = db.Column(db.Text, default="[]")        # רוצה כוננות

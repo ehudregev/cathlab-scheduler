@@ -35,6 +35,15 @@
         {% if doc.does_sessions and r.desired_sessions is not none %}
           <span>מבקש {{ r.desired_sessions }} ססיות</span>
         {% endif %}
+        {% if doc.does_sessions %}
+          {% if r.allow_triple_session == true %}
+            <span class="bg-green-100 text-green-700 px-2 py-0.5 rounded">3/שבוע: כן</span>
+          {% elif r.allow_triple_session == false %}
+            <span class="bg-red-100 text-red-700 px-2 py-0.5 rounded">3/שבוע: לא</span>
+          {% else %}
+            <span class="bg-gray-100 text-gray-500 px-2 py-0.5 rounded">3/שבוע: לא נענה</span>
+          {% endif %}
+        {% endif %}
       {% else %}
         <span class="text-red-400">טרם הוגש</span>
       {% endif %}
