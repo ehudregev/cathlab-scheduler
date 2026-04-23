@@ -333,7 +333,15 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         tier3 = [d for d in available if week_session_count[d.id][week_key] > 2]
         selected = sorted(tier1, key=sort_key)[:2]
         if len(selected) < 2:
-            selected += sorted(tier2, key=sort_key)[:2 - len(selected)]
+            needed = 2 - len(selected)
+            fallback = sorted(tier2, key=sort_key)[:needed]
+            for fb in fallback:
+                tier1_names = ", ".join(d.name for d in tier1) or "אין"
+                alerts.append(
+                    f"[DEBUG ססיה] {date_str}: {fb.name} מקבל ססיה שלישית בשבוע. "
+                    f"tier1 זמין: {tier1_names}"
+                )
+            selected += fallback
         if len(selected) < 2:
             selected += sorted(tier3, key=sort_key)[:2 - len(selected)]
 
