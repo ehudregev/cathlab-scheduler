@@ -344,25 +344,8 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             needed = 2 - len(selected)
             fallback = sorted(tier2, key=sort_key)[:needed]
             for fb in fallback:
-                tier1_names = ", ".join(d.name for d in tier1) or "אין"
-                tier2_names = ", ".join(d.name for d in tier2)
-                # Explain why each session doctor is not in tier1
-                excluded_reasons = []
-                for d in session_doctors:
-                    if d in tier1 or d in tier2:
-                        continue
-                    if date_str in unavailable_session[d.id]:
-                        excluded_reasons.append(f"{d.name}(לא זמין)")
-                    elif session_assigned_count[d.id] >= session_budget[d.id]:
-                        excluded_reasons.append(f"{d.name}(מיצה תקציב)")
-                    elif _run_after(session_assigned_dates[d.id], {date_str}) >= 3:
-                        excluded_reasons.append(f"{d.name}(3 ברצף)")
-                    else:
-                        excluded_reasons.append(f"{d.name}(?)")
                 alerts.append(
-                    f"[DEBUG ססיה] {date_str}: {fb.name} מקבל ססיה שלישית. "
-                    f"tier1={tier1_names} | tier2={tier2_names} | "
-                    f"חוץ מהרשימה: {', '.join(excluded_reasons) or 'אין'}"
+                    f"{fb.name} מקבל ססיה שלישית בשבוע ב-{date_str} (אין מספיק רופאים זמינים)"
                 )
             selected += fallback
         if len(selected) < 2:
