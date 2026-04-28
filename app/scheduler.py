@@ -187,7 +187,10 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         for d in oncall_doctors
     }
 
-    # Weekly on-call tracking — prevents clustering at start of month
+    # Current-month only on-call count — primary balancing metric
+    month_oncall_count = {d.id: 0 for d in oncall_doctors}
+
+    # Weekly on-call tracking — hard cap to prevent clustering
     week_oncall_count = defaultdict(lambda: defaultdict(int))
 
     num_weekends = len(weekend_units)
@@ -195,6 +198,9 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     import math
     # Hard cap: no doctor gets more than ceil(weekends/doctors) unless forced
     weekend_cap = math.ceil(num_weekends / max(num_oncall_docs, 1)) if num_oncall_docs else 0
+
+    # Hard weekly on-call cap per doctor (max 2, or ceil of fair share if > 2)
+    WEEKLY_ONCALL_CAP = max(2, math.ceil(len(weekday_oncall_days_all) / max(len(oncall_doctors), 1)))
 
     # Precompute availability per weekend slot
     avail_per_slot = []
@@ -263,6 +269,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         weekend_assigned[sat_str] = assigned.id
         weekend_count[assigned.id] += 1
         total_oncall_count[assigned.id] += 1
+        month_oncall_count[assigned.id] += 1
         oncall_assigned[assigned.id].update({fri_str, sat_str})
         week_oncall_count[assigned.id][israeli_week_key(fri)] += 1
         week_oncall_count[assigned.id][israeli_week_key(sat)] += 1
@@ -285,19 +292,25 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         if not eligible:
             eligible = [doc for doc in oncall_doctors if date_str not in unavailable[doc.id]]
 
+        # Apply hard weekly cap — doctors over cap go to fallback pool
+        under_weekly_cap = [doc for doc in eligible if week_oncall_count[doc.id][week_key] < WEEKLY_ONCALL_CAP]
+        pool = under_weekly_cap if under_weekly_cap else eligible
+
         if is_special:
-            candidates = sorted(eligible, key=lambda doc: (
-                week_oncall_count[doc.id][week_key],   # fewer this week = higher priority
+            candidates = sorted(pool, key=lambda doc: (
+                week_oncall_count[doc.id][week_key],
                 weekend_count[doc.id],
-                total_oncall_count[doc.id],
+                month_oncall_count[doc.id],          # current month first
+                total_oncall_count[doc.id],           # historical as tiebreaker
                 -_days_since_last(oncall_assigned[doc.id], date_str),
                 _run_after(oncall_assigned[doc.id], {date_str}) >= 3,
                 -(date_str in preferred[doc.id])
             ))
         else:
-            candidates = sorted(eligible, key=lambda doc: (
-                week_oncall_count[doc.id][week_key],   # fewer this week = higher priority
-                total_oncall_count[doc.id],
+            candidates = sorted(pool, key=lambda doc: (
+                week_oncall_count[doc.id][week_key],
+                month_oncall_count[doc.id],          # current month first
+                total_oncall_count[doc.id],           # historical as tiebreaker
                 -_days_since_last(oncall_assigned[doc.id], date_str),
                 _run_after(oncall_assigned[doc.id], {date_str}) >= 3,
                 -(date_str in preferred[doc.id])
@@ -306,6 +319,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         if candidates:
             assigned = candidates[0]
             total_oncall_count[assigned.id] += 1
+            month_oncall_count[assigned.id] += 1
             if is_special:
                 weekend_count[assigned.id] += 1
             oncall_assigned[assigned.id].add(date_str)
