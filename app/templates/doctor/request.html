@@ -43,10 +43,10 @@
       </div>
 
       <div class="bg-white rounded-xl shadow p-5 mb-6">
-        <p class="font-semibold mb-3">האם אתה מסכים לעשות 3 ססיות בשבוע אם יש צורך? <span class="text-red-500">*</span></p>
+        <p class="font-semibold mb-3">האם אתה מסכים לעשות 3 ססיות בשבוע אם יש צורך?</p>
         <div class="flex gap-6">
           <label class="flex items-center gap-2 cursor-pointer">
-            <input type="radio" name="allow_triple_session" value="yes" required
+            <input type="radio" name="allow_triple_session" value="yes"
               {% if existing and existing.allow_triple_session == true %}checked{% endif %}
               class="w-4 h-4 text-green-600"/>
             <span class="text-green-700 font-medium">כן</span>
