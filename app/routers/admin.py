@@ -286,11 +286,19 @@ def build_oncall_system_map(entries, days, holiday_set):
         if not x_has_session:
             continue
 
+        # No swaps for Fridays, Saturdays or holidays
+        if day.weekday() in (4, 5) or date_str in holiday_set:
+            continue
+
         # Conflict: X has on-call + session on date_str — find Y to swap on-call with
         swapped = False
         for other_day in days:
             other_date_str = other_day.strftime("%Y-%m-%d")
             if other_date_str == date_str:
+                continue
+
+            # Skip Fridays, Saturdays and holidays — no swaps with these days
+            if other_day.weekday() in (4, 5) or other_date_str in holiday_set:
                 continue
 
             y_doc = virtual_map.get((other_date_str, "oncall"))
