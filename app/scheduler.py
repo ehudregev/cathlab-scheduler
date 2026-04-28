@@ -213,6 +213,11 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     for i, doc in enumerate(docs_by_history):
         monthly_budget[doc.id] = base_budget + (1 if i < remainder else 0)
 
+    # DEBUG: show budgets and history in alerts
+    alerts.append(f"DEBUG בסיס={base_budget} שאריות={remainder} cap_שבועי={WEEKLY_ONCALL_CAP}")
+    for doc in docs_by_history:
+        alerts.append(f"DEBUG {doc.name}: היסטוריה={total_oncall_count[doc.id]} בודג׳ט={monthly_budget[doc.id]}")
+
     # Precompute availability per weekend slot
     avail_per_slot = []
     for (fri, sat) in weekend_units:
@@ -344,6 +349,10 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         else:
             alerts.append(f"לא נמצא כונן זמין ליום {date_str}")
             entries.append({"date_str": date_str, "entry_type": "oncall", "doctor_id": None})
+
+    # DEBUG: final oncall counts
+    for doc in oncall_doctors:
+        alerts.append(f"DEBUG סוף-כוננויות {doc.name}: {month_oncall_count[doc.id]}/{monthly_budget[doc.id]}")
 
     # ── SESSION SCHEDULING ──────────────────────────────────────────────────
 
