@@ -23,6 +23,10 @@
        class="bg-purple-100 text-purple-800 px-4 py-2 rounded-lg hover:bg-purple-200 font-medium">בקשות רופאים</a>
     <a href="/admin/schedule/{{ year }}/{{ month }}/pdf"
        class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">הורד PDF</a>
+    {% if status and status.status == 'published' %}
+    <a href="/admin/schedule/{{ year }}/{{ month }}/oncall-system-pdf"
+       class="bg-purple-700 text-white px-4 py-2 rounded-lg hover:bg-purple-800">הורד לוח הזנות כוננויות</a>
+    {% endif %}
     <form action="/admin/schedule/{{ year }}/{{ month }}/generate" method="POST">
       <button class="bg-yellow-500 text-white px-4 py-2 rounded-lg hover:bg-yellow-600">צור מחדש</button>
     </form>

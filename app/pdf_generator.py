@@ -102,3 +102,89 @@ def generate_pdf(year, month, month_name, days, holiday_set, entry_map, doctors)
         pdf.ln()
 
     return bytes(pdf.output())
+
+
+def generate_oncall_system_pdf(year, month, month_name, days, holiday_set, virtual_map, doctors, warnings=None):
+    """Generate the fictitious 'oncall system input' PDF with swapped doctors."""
+
+    pdf = FPDF(orientation="L", unit="mm", format="A4")
+    pdf.add_font("Heebo", style="", fname=FONT_PATH)
+    pdf.add_font("Heebo", style="B", fname=FONT_PATH)
+    pdf.add_page()
+    pdf.set_auto_page_break(False)
+    pdf.set_margins(8, 8, 8)
+
+    # Title
+    pdf.set_font("Heebo", "B", 14)
+    title = bidi(f"לוח הזנות למערכת הכוננויות — {month_name} {year}")
+    pdf.cell(0, 10, title, new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.ln(2)
+
+    # Warnings
+    if warnings:
+        pdf.set_font("Heebo", "", 8)
+        pdf.set_text_color(180, 0, 0)
+        for w in warnings:
+            pdf.cell(0, 5, bidi(f"⚠ {w}"), new_x="LMARGIN", new_y="NEXT", align="R")
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln(1)
+
+    col_widths = {"date": 22, "day": 22, "oncall": 60, "sess1": 60, "sess2": 60}
+
+    pdf.set_fill_color(100, 60, 160)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Heebo", "B", 9)
+
+    headers = [
+        ("date",   "תאריך"),
+        ("day",    "יום"),
+        ("oncall", "כונן"),
+        ("sess1",  "ססיה 1"),
+        ("sess2",  "ססיה 2"),
+    ]
+    for key, label in headers:
+        pdf.cell(col_widths[key], 7, bidi(label), border=1, align="C", fill=True)
+    pdf.ln()
+
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Heebo", "", 9)
+
+    row_h = min(7, (210 - 27) / max(len(days), 1))
+
+    for day in days:
+        date_str = day.strftime("%Y-%m-%d")
+        is_holiday = date_str in holiday_set
+        is_weekend = day.weekday() in (4, 5)
+
+        def doctor_name_from_map(d_str, etype):
+            doc_id = virtual_map.get((d_str, etype))
+            if not doc_id:
+                return "—"
+            doc = doctors.get(doc_id)
+            return bidi(doc.name) if doc else "—"
+
+        if is_holiday:
+            pdf.set_fill_color(255, 220, 150)
+        elif is_weekend:
+            pdf.set_fill_color(200, 220, 255)
+        else:
+            pdf.set_fill_color(245, 245, 245)
+
+        day_name = DAY_NAMES_HE[day.weekday()]
+        note = bidi(" חג") if is_holiday else ""
+
+        pdf.cell(col_widths["date"],   row_h, day.strftime("%d/%m"),                      border=1, align="C", fill=True)
+        pdf.cell(col_widths["day"],    row_h, bidi(day_name) + note,                      border=1, align="C", fill=True)
+        pdf.cell(col_widths["oncall"], row_h, doctor_name_from_map(date_str, "oncall"),    border=1, align="C", fill=True)
+
+        if not is_weekend and not is_holiday:
+            pdf.cell(col_widths["sess1"], row_h, doctor_name_from_map(date_str, "session1"), border=1, align="C", fill=True)
+            pdf.cell(col_widths["sess2"], row_h, doctor_name_from_map(date_str, "session2"), border=1, align="C", fill=True)
+        else:
+            pdf.set_fill_color(230, 230, 230)
+            pdf.cell(col_widths["sess1"], row_h, "—", border=1, align="C", fill=True)
+            pdf.cell(col_widths["sess2"], row_h, "—", border=1, align="C", fill=True)
+
+        pdf.ln()
+
+    return bytes(pdf.output())

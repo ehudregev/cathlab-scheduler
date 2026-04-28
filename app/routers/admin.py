@@ -2,7 +2,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, send_f
 from app import db
 from app.models import Doctor, Request, ScheduleEntry, ScheduleStatus, HistoryEntry
 from app.scheduler import generate_schedule, get_israeli_holidays, get_month_days, is_session_day
-from app.pdf_generator import generate_pdf
+from app.pdf_generator import generate_pdf, generate_oncall_system_pdf
 import uuid
 import csv
 import io
@@ -250,6 +250,98 @@ def view_requests(year, month):
         year=year,
         month_name=MONTH_NAMES[month],
         days=days,
+    )
+
+
+def build_oncall_system_map(entries, days, holiday_set):
+    """
+    Build a virtual entry map for the on-call system input PDF.
+
+    For every day D where doctor X has both on-call AND a session:
+    - Find doctor Y who has on-call on a different day D'
+    - Swap their on-calls: Y takes X's on-call on D, X takes Y's on-call on D'
+    - Conditions:
+        * Y must not have a session on D (otherwise Y gets same conflict)
+        * X must not have a session on D' (otherwise X gets same conflict)
+
+    Sessions are never touched — only on-call assignments change.
+
+    Returns (virtual_map, warnings)
+    virtual_map: {(date_str, entry_type): doctor_id}
+    """
+    virtual_map = {(e.date_str, e.entry_type): e.doctor_id for e in entries}
+    warnings = []
+
+    for day in days:
+        date_str = day.strftime("%Y-%m-%d")
+        x_doc = virtual_map.get((date_str, "oncall"))
+        if not x_doc:
+            continue
+
+        # Check if X has any session on this day
+        x_has_session = (
+            virtual_map.get((date_str, "session1")) == x_doc or
+            virtual_map.get((date_str, "session2")) == x_doc
+        )
+        if not x_has_session:
+            continue
+
+        # Conflict: X has on-call + session on date_str — find Y to swap on-call with
+        swapped = False
+        for other_day in days:
+            other_date_str = other_day.strftime("%Y-%m-%d")
+            if other_date_str == date_str:
+                continue
+
+            y_doc = virtual_map.get((other_date_str, "oncall"))
+            if not y_doc or y_doc == x_doc:
+                continue
+
+            # Y must not have a session on the conflict day D (would create new conflict)
+            y_has_session_on_D = (
+                virtual_map.get((date_str, "session1")) == y_doc or
+                virtual_map.get((date_str, "session2")) == y_doc
+            )
+            if y_has_session_on_D:
+                continue
+
+            # X must not have a session on D' (would create new conflict for X)
+            x_has_session_on_D_prime = (
+                virtual_map.get((other_date_str, "session1")) == x_doc or
+                virtual_map.get((other_date_str, "session2")) == x_doc
+            )
+            if x_has_session_on_D_prime:
+                continue
+
+            # Swap on-calls
+            virtual_map[(date_str, "oncall")] = y_doc
+            virtual_map[(other_date_str, "oncall")] = x_doc
+            swapped = True
+            break
+
+        if not swapped:
+            warnings.append(f"לא נמצאה החלפת כוננות עבור תאריך {date_str}")
+
+    return virtual_map, warnings
+
+
+@admin_bp.route("/schedule/<int:year>/<int:month>/oncall-system-pdf")
+def download_oncall_system_pdf(year, month):
+    days = get_month_days(year, month)
+    holiday_set = get_israeli_holidays(year)
+    entries = ScheduleEntry.query.filter_by(month=month, year=year).all()
+    doctors = {d.id: d for d in Doctor.query.all()}
+
+    virtual_map, warnings = build_oncall_system_map(entries, days, holiday_set)
+
+    pdf_bytes = generate_oncall_system_pdf(
+        year, month, MONTH_NAMES[month], days, holiday_set, virtual_map, doctors, warnings
+    )
+    return send_file(
+        io.BytesIO(pdf_bytes),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"לוח_הזנות_כוננויות_{MONTH_NAMES[month]}_{year}.pdf",
     )
 
 
