@@ -202,21 +202,49 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     # Hard weekly cap: 2 weekday oncalls per doctor per week
     WEEKLY_ONCALL_CAP = max(1, math.floor(5 / max(num_oncall_docs, 1)) + 1)
 
-    # Per-doctor monthly budget: distribute total oncall days as evenly as possible.
-    # Doctors with fewer historical oncalls get the "extra" slots first.
+    # Per-doctor monthly budget based on actual availability.
+    # Each doctor's share = total_oncall_days * (their_available_days / total_available_days).
+    # This ensures doctors with many unavailable days get a smaller budget,
+    # and the totals add up to the actual number of days to fill.
+    doc_available_days = {}
+    for doc in oncall_doctors:
+        doc_available_days[doc.id] = sum(
+            1 for d in days if d.strftime("%Y-%m-%d") not in unavailable[doc.id]
+        )
+    total_available = sum(doc_available_days.values())
     total_oncall_days = len(days)
-    base_budget = total_oncall_days // max(num_oncall_docs, 1)
-    remainder = total_oncall_days % max(num_oncall_docs, 1)
-    # Give extra slots to doctors with fewest historical oncalls (most deserving)
+
+    # Compute fractional fair share per doctor, then distribute integer budgets
+    # so that sum(budgets) == total_oncall_days
     docs_by_history = sorted(oncall_doctors, key=lambda d: total_oncall_count[d.id])
-    monthly_budget = {}
-    for i, doc in enumerate(docs_by_history):
-        monthly_budget[doc.id] = base_budget + (1 if i < remainder else 0)
+    if total_available == 0:
+        monthly_budget = {doc.id: 0 for doc in oncall_doctors}
+    else:
+        # Assign floor first
+        monthly_budget = {}
+        for doc in oncall_doctors:
+            monthly_budget[doc.id] = int(total_oncall_days * doc_available_days[doc.id] / total_available)
+        # Distribute remainder slots to doctors with most fractional leftover,
+        # tiebreak by fewest historical oncalls
+        remainder = total_oncall_days - sum(monthly_budget.values())
+        fractions = sorted(
+            oncall_doctors,
+            key=lambda d: (
+                -(total_oncall_days * doc_available_days[d.id] / total_available - monthly_budget[d.id]),
+                total_oncall_count[d.id]
+            )
+        )
+        for i in range(remainder):
+            monthly_budget[fractions[i].id] += 1
+
+    base_budget = total_oncall_days // max(num_oncall_docs, 1)
+    remainder_dbg = total_oncall_days % max(num_oncall_docs, 1)
 
     # DEBUG: show budgets and history in alerts
-    alerts.append(f"DEBUG בסיס={base_budget} שאריות={remainder} cap_שבועי={WEEKLY_ONCALL_CAP}")
+    alerts.append(f"DEBUG בסיס={base_budget} שאריות={remainder_dbg} cap_שבועי={WEEKLY_ONCALL_CAP}")
     for doc in docs_by_history:
-        alerts.append(f"DEBUG {doc.name}: היסטוריה={total_oncall_count[doc.id]} בודג׳ט={monthly_budget[doc.id]}")
+        n_unavail = len(unavailable[doc.id])
+        alerts.append(f"DEBUG {doc.name}: זמין={doc_available_days[doc.id]}ימים לא_זמין={n_unavail} בודג׳ט={monthly_budget[doc.id]}")
 
     # Precompute availability per weekend slot
     avail_per_slot = []
