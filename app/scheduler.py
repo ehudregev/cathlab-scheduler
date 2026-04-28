@@ -187,10 +187,10 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         for d in oncall_doctors
     }
 
-    # Current-month only on-call count — primary balancing metric
+    # Current-month on-call count (ALL oncalls: weekday + weekend) — single source of truth
     month_oncall_count = {d.id: 0 for d in oncall_doctors}
 
-    # Weekly on-call tracking — hard cap to prevent clustering
+    # Weekly on-call tracking — hard cap to prevent clustering in one week
     week_oncall_count = defaultdict(lambda: defaultdict(int))
 
     num_weekends = len(weekend_units)
@@ -199,13 +199,12 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     # Hard cap: no doctor gets more than ceil(weekends/doctors) unless forced
     weekend_cap = math.ceil(num_weekends / max(num_oncall_docs, 1)) if num_oncall_docs else 0
 
-    # Hard weekly on-call cap: based on 5-day week divided by number of doctors
-    WEEKLY_ONCALL_CAP = max(1, math.ceil(5 / max(num_oncall_docs, 1)))
+    # Hard monthly cap: total oncall days / doctors (ceil, no tolerance)
+    total_oncall_days = len(days)  # every day needs an oncall
+    MONTHLY_ONCALL_CAP = math.ceil(total_oncall_days / max(num_oncall_docs, 1))
 
-    # Hard monthly on-call cap: total weekday slots / doctors, +1 for rounding tolerance
-    total_weekday_slots = len(weekday_oncall_days_all)
-    MONTHLY_ONCALL_CAP = math.ceil(total_weekday_slots / max(num_oncall_docs, 1)) + 1
-    monthly_oncall_pool = {d.id: 0 for d in oncall_doctors}  # tracks weekday on-calls only
+    # Hard weekly cap: max 2 oncall days per doctor per week (weekday only — weekends handled separately)
+    WEEKLY_ONCALL_CAP = max(1, math.floor(5 / max(num_oncall_docs, 1)) + 1)
 
     # Precompute availability per weekend slot
     avail_per_slot = []
@@ -257,8 +256,10 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": None})
             continue
 
-        under_cap = [doc for doc in available if weekend_count[doc.id] < weekend_cap]
-        pool = under_cap if under_cap else available
+        under_monthly = [doc for doc in available if month_oncall_count[doc.id] < MONTHLY_ONCALL_CAP]
+        pool = under_monthly if under_monthly else available
+        under_cap = [doc for doc in pool if weekend_count[doc.id] < weekend_cap]
+        pool = under_cap if under_cap else pool
 
         pool.sort(key=lambda d: (
             weekend_count[d.id],
@@ -273,8 +274,8 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         weekend_assigned[fri_str] = assigned.id
         weekend_assigned[sat_str] = assigned.id
         weekend_count[assigned.id] += 1
-        total_oncall_count[assigned.id] += 1
-        month_oncall_count[assigned.id] += 1
+        total_oncall_count[assigned.id] += 2
+        month_oncall_count[assigned.id] += 2  # fri + sat = 2 oncall days
         oncall_assigned[assigned.id].update({fri_str, sat_str})
         week_oncall_count[assigned.id][israeli_week_key(fri)] += 1
         week_oncall_count[assigned.id][israeli_week_key(sat)] += 1
@@ -298,7 +299,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             eligible = [doc for doc in oncall_doctors if date_str not in unavailable[doc.id]]
 
         # Apply hard monthly cap first, then weekly cap
-        under_monthly_cap = [doc for doc in eligible if monthly_oncall_pool[doc.id] < MONTHLY_ONCALL_CAP]
+        under_monthly_cap = [doc for doc in eligible if month_oncall_count[doc.id] < MONTHLY_ONCALL_CAP]
         pool = under_monthly_cap if under_monthly_cap else eligible
         under_weekly_cap = [doc for doc in pool if week_oncall_count[doc.id][week_key] < WEEKLY_ONCALL_CAP]
         pool = under_weekly_cap if under_weekly_cap else pool
@@ -329,8 +330,6 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             month_oncall_count[assigned.id] += 1
             if is_special:
                 weekend_count[assigned.id] += 1
-            else:
-                monthly_oncall_pool[assigned.id] += 1
             oncall_assigned[assigned.id].add(date_str)
             week_oncall_count[assigned.id][week_key] += 1
             entries.append({"date_str": date_str, "entry_type": "oncall", "doctor_id": assigned.id})
