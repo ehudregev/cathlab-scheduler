@@ -249,28 +249,33 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         fri_str = fri.strftime("%Y-%m-%d")
         sat_str = sat.strftime("%Y-%m-%d")
 
-        # Hard exclude: not available OR would create 4+ consecutive days
-        available = [
+        # Priority 1: under budget AND not consecutive-blocked
+        pool = [
             doc for doc in oncall_doctors
             if fri_str not in unavailable[doc.id]
             and sat_str not in unavailable[doc.id]
+            and month_oncall_count[doc.id] + 2 <= monthly_budget[doc.id]
             and _run_after(oncall_assigned[doc.id], {fri_str, sat_str}) < 4
         ]
-        # Fallback: ignore consecutive constraint if it leaves no one
-        if not available:
-            available = [
+        # Priority 2: under budget, relax consecutive
+        if not pool:
+            pool = [
+                doc for doc in oncall_doctors
+                if fri_str not in unavailable[doc.id]
+                and sat_str not in unavailable[doc.id]
+                and month_oncall_count[doc.id] + 2 <= monthly_budget[doc.id]
+            ]
+        # Priority 3: last resort
+        if not pool:
+            pool = [
                 doc for doc in oncall_doctors
                 if fri_str not in unavailable[doc.id] and sat_str not in unavailable[doc.id]
             ]
-        if not available:
+        if not pool:
             alerts.append(f"לא נמצא כונן זמין לסוף שבוע {fri_str}")
             entries.append({"date_str": fri_str, "entry_type": "oncall", "doctor_id": None})
             entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": None})
             continue
-
-        # Hard monthly budget — never exceeded, no fallback
-        under_monthly = [doc for doc in available if month_oncall_count[doc.id] < monthly_budget[doc.id]]
-        pool = under_monthly if under_monthly else available  # fallback only if all are at budget (end of month)
 
         pool.sort(key=lambda d: (
             month_oncall_count[d.id],
@@ -301,19 +306,24 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         is_special = d.weekday() in (4, 5) or date_str in holiday_set
         week_key = israeli_week_key(d)
 
-        # Hard exclude: not available OR would create 4+ consecutive days
-        eligible = [
+        # Build pool respecting budget first, relax consecutive constraint only if needed
+        # Priority 1: under budget AND not consecutive-blocked
+        pool = [
             doc for doc in oncall_doctors
             if date_str not in unavailable[doc.id]
+            and month_oncall_count[doc.id] < monthly_budget[doc.id]
             and _run_after(oncall_assigned[doc.id], {date_str}) < 4
         ]
-        # Fallback: ignore consecutive constraint if it leaves no one
-        if not eligible:
-            eligible = [doc for doc in oncall_doctors if date_str not in unavailable[doc.id]]
-
-        # Hard monthly budget — NEVER exceeded, no fallback
-        under_monthly_cap = [doc for doc in eligible if month_oncall_count[doc.id] < monthly_budget[doc.id]]
-        pool = under_monthly_cap if under_monthly_cap else eligible  # fallback only at end of month
+        # Priority 2: under budget, relax consecutive constraint
+        if not pool:
+            pool = [
+                doc for doc in oncall_doctors
+                if date_str not in unavailable[doc.id]
+                and month_oncall_count[doc.id] < monthly_budget[doc.id]
+            ]
+        # Priority 3: all available (budget exceeded — last resort only)
+        if not pool:
+            pool = [doc for doc in oncall_doctors if date_str not in unavailable[doc.id]]
 
         # Weekly cap is SOFT — only affects sort order, does not exclude
         if is_special:
