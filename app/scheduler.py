@@ -167,6 +167,13 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
 
     # ── ON-CALL SCHEDULING ──────────────────────────────────────────────────
 
+    def israeli_week_key(d):
+        """Return the date of the Sunday that starts this Israeli work week."""
+        wd = d.weekday()
+        if wd == 6:  # Sunday — week starts today
+            return d
+        return d - timedelta(days=wd + 1)  # Mon(0)→-1, Tue(1)→-2, ..., Thu(3)→-4
+
     weekend_units = get_weekend_units(days)
     # All weekdays (including holidays) need on-call coverage
     weekday_oncall_days_all = [d for d in days if d.weekday() in (0, 1, 2, 3, 6)]
@@ -179,6 +186,9 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         d.id: oncall_counts[d.id]["weekday_oncalls"] + oncall_counts[d.id]["weekend_units"]
         for d in oncall_doctors
     }
+
+    # Weekly on-call tracking — prevents clustering at start of month
+    week_oncall_count = defaultdict(lambda: defaultdict(int))
 
     num_weekends = len(weekend_units)
     num_oncall_docs = len(oncall_doctors)
@@ -254,6 +264,8 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         weekend_count[assigned.id] += 1
         total_oncall_count[assigned.id] += 1
         oncall_assigned[assigned.id].update({fri_str, sat_str})
+        week_oncall_count[assigned.id][israeli_week_key(fri)] += 1
+        week_oncall_count[assigned.id][israeli_week_key(sat)] += 1
         entries.append({"date_str": fri_str, "entry_type": "oncall", "doctor_id": assigned.id})
         entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": assigned.id})
 
@@ -261,6 +273,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     for d in weekday_oncall_days_all:
         date_str = d.strftime("%Y-%m-%d")
         is_special = d.weekday() in (4, 5) or date_str in holiday_set
+        week_key = israeli_week_key(d)
 
         # Hard exclude: not available OR would create 4+ consecutive days
         eligible = [
@@ -274,17 +287,19 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
 
         if is_special:
             candidates = sorted(eligible, key=lambda doc: (
+                week_oncall_count[doc.id][week_key],   # fewer this week = higher priority
                 weekend_count[doc.id],
                 total_oncall_count[doc.id],
-                -_days_since_last(oncall_assigned[doc.id], date_str),  # spread across month
-                _run_after(oncall_assigned[doc.id], {date_str}) >= 3,  # soft: avoid 3-run
+                -_days_since_last(oncall_assigned[doc.id], date_str),
+                _run_after(oncall_assigned[doc.id], {date_str}) >= 3,
                 -(date_str in preferred[doc.id])
             ))
         else:
             candidates = sorted(eligible, key=lambda doc: (
+                week_oncall_count[doc.id][week_key],   # fewer this week = higher priority
                 total_oncall_count[doc.id],
-                -_days_since_last(oncall_assigned[doc.id], date_str),  # spread across month
-                _run_after(oncall_assigned[doc.id], {date_str}) >= 3,  # soft: avoid 3-run
+                -_days_since_last(oncall_assigned[doc.id], date_str),
+                _run_after(oncall_assigned[doc.id], {date_str}) >= 3,
                 -(date_str in preferred[doc.id])
             ))
 
@@ -294,12 +309,16 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             if is_special:
                 weekend_count[assigned.id] += 1
             oncall_assigned[assigned.id].add(date_str)
+            week_oncall_count[assigned.id][week_key] += 1
             entries.append({"date_str": date_str, "entry_type": "oncall", "doctor_id": assigned.id})
         else:
             alerts.append(f"לא נמצא כונן זמין ליום {date_str}")
             entries.append({"date_str": date_str, "entry_type": "oncall", "doctor_id": None})
 
     # ── SESSION SCHEDULING ──────────────────────────────────────────────────
+
+    # Build map of who has on-call each day (for session preference)
+    oncall_by_date = {e["date_str"]: e["doctor_id"] for e in entries if e["entry_type"] == "oncall"}
 
     session_days = [d for d in days if is_session_day(d, holiday_set)]
 
@@ -345,13 +364,6 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     week_session_count = defaultdict(lambda: defaultdict(int))
     session_assigned_dates = defaultdict(set)  # for consecutive-day check
 
-    def israeli_week_key(d):
-        """Return the date of the Sunday that starts this Israeli work week."""
-        wd = d.weekday()
-        if wd == 6:  # Sunday — week starts today
-            return d
-        return d - timedelta(days=wd + 1)  # Mon(0)→-1, Tue(1)→-2, ..., Thu(3)→-4
-
     for day in session_days:
         date_str = day.strftime("%Y-%m-%d")
         week_key = israeli_week_key(day)
@@ -389,10 +401,12 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
 
         def sort_key(doc):
             ratio = session_assigned_count[doc.id] / max(session_budget[doc.id], 1)
+            has_oncall_today = oncall_by_date.get(date_str) == doc.id
             return (
                 week_session_count[doc.id][week_key],  # fewer this week = higher priority
                 -_days_since_last(session_assigned_dates[doc.id], date_str),  # spread across month
                 -(date_str in preferred_session[doc.id]),
+                -has_oncall_today,  # prefer doctors already doing on-call today
                 ratio,
             )
 
