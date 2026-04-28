@@ -268,13 +268,13 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": None})
             continue
 
+        # Hard monthly budget — never exceeded, no fallback
         under_monthly = [doc for doc in available if month_oncall_count[doc.id] < monthly_budget[doc.id]]
-        pool = under_monthly if under_monthly else available
-        under_cap = [doc for doc in pool if weekend_count[doc.id] < weekend_cap]
-        pool = under_cap if under_cap else pool
+        pool = under_monthly if under_monthly else available  # fallback only if all are at budget (end of month)
 
         pool.sort(key=lambda d: (
-            month_oncall_count[d.id],                            # fewest oncalls this month first
+            month_oncall_count[d.id],
+            weekend_count[d.id] >= weekend_cap,   # soft: prefer under weekend cap
             weekend_count[d.id],
             -_days_since_last(oncall_assigned[d.id], fri_str),
             doc_weekend_availability[d.id],
@@ -311,27 +311,28 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         if not eligible:
             eligible = [doc for doc in oncall_doctors if date_str not in unavailable[doc.id]]
 
-        # Apply hard monthly budget first, then weekly cap
+        # Hard monthly budget — NEVER exceeded, no fallback
         under_monthly_cap = [doc for doc in eligible if month_oncall_count[doc.id] < monthly_budget[doc.id]]
-        pool = under_monthly_cap if under_monthly_cap else eligible
-        under_weekly_cap = [doc for doc in pool if week_oncall_count[doc.id][week_key] < WEEKLY_ONCALL_CAP]
-        pool = under_weekly_cap if under_weekly_cap else pool
+        pool = under_monthly_cap if under_monthly_cap else eligible  # fallback only at end of month
 
+        # Weekly cap is SOFT — only affects sort order, does not exclude
         if is_special:
             candidates = sorted(pool, key=lambda doc: (
+                month_oncall_count[doc.id],
+                week_oncall_count[doc.id][week_key] >= WEEKLY_ONCALL_CAP,  # prefer under cap
                 week_oncall_count[doc.id][week_key],
                 weekend_count[doc.id],
-                month_oncall_count[doc.id],          # current month first
-                total_oncall_count[doc.id],           # historical as tiebreaker
+                total_oncall_count[doc.id],
                 -_days_since_last(oncall_assigned[doc.id], date_str),
                 _run_after(oncall_assigned[doc.id], {date_str}) >= 3,
                 -(date_str in preferred[doc.id])
             ))
         else:
             candidates = sorted(pool, key=lambda doc: (
+                month_oncall_count[doc.id],
+                week_oncall_count[doc.id][week_key] >= WEEKLY_ONCALL_CAP,  # prefer under cap
                 week_oncall_count[doc.id][week_key],
-                month_oncall_count[doc.id],          # current month first
-                total_oncall_count[doc.id],           # historical as tiebreaker
+                total_oncall_count[doc.id],
                 -_days_since_last(oncall_assigned[doc.id], date_str),
                 _run_after(oncall_assigned[doc.id], {date_str}) >= 3,
                 -(date_str in preferred[doc.id])
