@@ -24,6 +24,21 @@ def _max_run(date_strs):
     return max_run
 
 
+def _days_since_last(assigned_dates, current_date_str):
+    """Return number of calendar days since the doctor's last assignment.
+
+    If no assignments yet, return a large number (999) so the doctor is
+    preferred for early spreading.  A higher value means the doctor hasn't
+    been assigned in a long time — useful for spreading assignments across
+    the whole month.
+    """
+    if not assigned_dates:
+        return 999
+    cur = date.fromisoformat(current_date_str)
+    last = max(date.fromisoformat(s) for s in assigned_dates)
+    return (cur - last).days
+
+
 def _run_after(existing, new_dates):
     """Max consecutive run after adding new_dates (iterable of str) to existing set."""
     return _max_run(existing | set(new_dates))
@@ -226,6 +241,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
 
         pool.sort(key=lambda d: (
             weekend_count[d.id],
+            -_days_since_last(oncall_assigned[d.id], fri_str),  # prefer doctors not assigned recently
             doc_weekend_availability[d.id],
             doc_exclusive_slots[d.id],
             _run_after(oncall_assigned[d.id], {fri_str, sat_str}) >= 3,  # soft: avoid 3-run
@@ -260,12 +276,14 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             candidates = sorted(eligible, key=lambda doc: (
                 weekend_count[doc.id],
                 total_oncall_count[doc.id],
+                -_days_since_last(oncall_assigned[doc.id], date_str),  # spread across month
                 _run_after(oncall_assigned[doc.id], {date_str}) >= 3,  # soft: avoid 3-run
                 -(date_str in preferred[doc.id])
             ))
         else:
             candidates = sorted(eligible, key=lambda doc: (
                 total_oncall_count[doc.id],
+                -_days_since_last(oncall_assigned[doc.id], date_str),  # spread across month
                 _run_after(oncall_assigned[doc.id], {date_str}) >= 3,  # soft: avoid 3-run
                 -(date_str in preferred[doc.id])
             ))
@@ -373,6 +391,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             ratio = session_assigned_count[doc.id] / max(session_budget[doc.id], 1)
             return (
                 week_session_count[doc.id][week_key],  # fewer this week = higher priority
+                -_days_since_last(session_assigned_dates[doc.id], date_str),  # spread across month
                 -(date_str in preferred_session[doc.id]),
                 ratio,
             )
