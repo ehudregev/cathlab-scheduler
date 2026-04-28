@@ -306,8 +306,8 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             continue
 
         pool.sort(key=lambda d: (
-            month_oncall_count[d.id],
-            weekend_count[d.id] >= weekend_cap,   # soft: prefer under weekend cap
+            month_oncall_count[d.id] - monthly_budget[d.id],   # furthest under budget first
+            weekend_count[d.id] >= weekend_cap,
             weekend_count[d.id],
             -_days_since_last(oncall_assigned[d.id], fri_str),
             doc_weekend_availability[d.id],
@@ -354,27 +354,21 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             pool = [doc for doc in oncall_doctors if date_str not in unavailable[doc.id]]
 
         # Weekly cap is SOFT — only affects sort order, does not exclude
-        if is_special:
-            candidates = sorted(pool, key=lambda doc: (
-                month_oncall_count[doc.id],
-                week_oncall_count[doc.id][week_key] >= WEEKLY_ONCALL_CAP,  # prefer under cap
+        def _oncall_sort_key(doc, is_special):
+            # Primary: distance from budget (negative = furthest under budget = highest priority)
+            budget_gap = month_oncall_count[doc.id] - monthly_budget[doc.id]
+            return (
+                budget_gap,
+                week_oncall_count[doc.id][week_key] >= WEEKLY_ONCALL_CAP,
                 week_oncall_count[doc.id][week_key],
-                weekend_count[doc.id],
+                weekend_count[doc.id] if is_special else 0,
                 total_oncall_count[doc.id],
                 -_days_since_last(oncall_assigned[doc.id], date_str),
                 _run_after(oncall_assigned[doc.id], {date_str}) >= 3,
                 -(date_str in preferred[doc.id])
-            ))
-        else:
-            candidates = sorted(pool, key=lambda doc: (
-                month_oncall_count[doc.id],
-                week_oncall_count[doc.id][week_key] >= WEEKLY_ONCALL_CAP,  # prefer under cap
-                week_oncall_count[doc.id][week_key],
-                total_oncall_count[doc.id],
-                -_days_since_last(oncall_assigned[doc.id], date_str),
-                _run_after(oncall_assigned[doc.id], {date_str}) >= 3,
-                -(date_str in preferred[doc.id])
-            ))
+            )
+
+        candidates = sorted(pool, key=lambda doc: _oncall_sort_key(doc, is_special))
 
         if candidates:
             assigned = candidates[0]
