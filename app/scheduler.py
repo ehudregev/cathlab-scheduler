@@ -187,7 +187,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         for d in oncall_doctors
     }
 
-    # Current-month on-call count (ALL oncalls: weekday + weekend) — single source of truth
+    # Current-month on-call count (ALL oncalls: weekday + weekend)
     month_oncall_count = {d.id: 0 for d in oncall_doctors}
 
     # Weekly on-call tracking — hard cap to prevent clustering in one week
@@ -199,12 +199,19 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     # Hard cap: no doctor gets more than ceil(weekends/doctors) unless forced
     weekend_cap = math.ceil(num_weekends / max(num_oncall_docs, 1)) if num_oncall_docs else 0
 
-    # Hard monthly cap: total oncall days / doctors (ceil, no tolerance)
-    total_oncall_days = len(days)  # every day needs an oncall
-    MONTHLY_ONCALL_CAP = math.ceil(total_oncall_days / max(num_oncall_docs, 1))
-
-    # Hard weekly cap: max 2 oncall days per doctor per week (weekday only — weekends handled separately)
+    # Hard weekly cap: 2 weekday oncalls per doctor per week
     WEEKLY_ONCALL_CAP = max(1, math.floor(5 / max(num_oncall_docs, 1)) + 1)
+
+    # Per-doctor monthly budget: distribute total oncall days as evenly as possible.
+    # Doctors with fewer historical oncalls get the "extra" slots first.
+    total_oncall_days = len(days)
+    base_budget = total_oncall_days // max(num_oncall_docs, 1)
+    remainder = total_oncall_days % max(num_oncall_docs, 1)
+    # Give extra slots to doctors with fewest historical oncalls (most deserving)
+    docs_by_history = sorted(oncall_doctors, key=lambda d: total_oncall_count[d.id])
+    monthly_budget = {}
+    for i, doc in enumerate(docs_by_history):
+        monthly_budget[doc.id] = base_budget + (1 if i < remainder else 0)
 
     # Precompute availability per weekend slot
     avail_per_slot = []
@@ -256,17 +263,18 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": None})
             continue
 
-        under_monthly = [doc for doc in available if month_oncall_count[doc.id] < MONTHLY_ONCALL_CAP]
+        under_monthly = [doc for doc in available if month_oncall_count[doc.id] < monthly_budget[doc.id]]
         pool = under_monthly if under_monthly else available
         under_cap = [doc for doc in pool if weekend_count[doc.id] < weekend_cap]
         pool = under_cap if under_cap else pool
 
         pool.sort(key=lambda d: (
+            month_oncall_count[d.id],                            # fewest oncalls this month first
             weekend_count[d.id],
-            -_days_since_last(oncall_assigned[d.id], fri_str),  # prefer doctors not assigned recently
+            -_days_since_last(oncall_assigned[d.id], fri_str),
             doc_weekend_availability[d.id],
             doc_exclusive_slots[d.id],
-            _run_after(oncall_assigned[d.id], {fri_str, sat_str}) >= 3,  # soft: avoid 3-run
+            _run_after(oncall_assigned[d.id], {fri_str, sat_str}) >= 3,
             -(fri_str in preferred[d.id] or sat_str in preferred[d.id])
         ))
 
@@ -298,8 +306,8 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         if not eligible:
             eligible = [doc for doc in oncall_doctors if date_str not in unavailable[doc.id]]
 
-        # Apply hard monthly cap first, then weekly cap
-        under_monthly_cap = [doc for doc in eligible if month_oncall_count[doc.id] < MONTHLY_ONCALL_CAP]
+        # Apply hard monthly budget first, then weekly cap
+        under_monthly_cap = [doc for doc in eligible if month_oncall_count[doc.id] < monthly_budget[doc.id]]
         pool = under_monthly_cap if under_monthly_cap else eligible
         under_weekly_cap = [doc for doc in pool if week_oncall_count[doc.id][week_key] < WEEKLY_ONCALL_CAP]
         pool = under_weekly_cap if under_weekly_cap else pool
