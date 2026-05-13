@@ -2,7 +2,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, send_f
 from app import db
 from app.models import Doctor, Request, ScheduleEntry, ScheduleStatus, HistoryEntry
 from app.scheduler import generate_schedule, get_israeli_holidays, get_month_days, is_session_day
-from app.pdf_generator import generate_pdf, generate_oncall_system_pdf
+from app.pdf_generator import generate_pdf, generate_oncall_system_pdf, generate_availability_pdf
 import uuid
 import csv
 import io
@@ -367,6 +367,27 @@ def download_pdf(year, month):
         mimetype="application/pdf",
         as_attachment=True,
         download_name=f"לוח_{MONTH_NAMES[month]}_{year}.pdf",
+    )
+
+
+@admin_bp.route("/requests/<int:year>/<int:month>/availability-pdf")
+def download_availability_pdf(year, month):
+    days = get_month_days(year, month)
+    holiday_set = get_israeli_holidays(year)
+    oncall_doctors = Doctor.query.filter_by(does_oncall=True).order_by(Doctor.name).all()
+    session_doctors = Doctor.query.filter_by(does_sessions=True).order_by(Doctor.name).all()
+    reqs = Request.query.filter_by(month=month, year=year).all()
+    req_by_doctor = {r.doctor_id: r for r in reqs}
+
+    pdf_bytes = generate_availability_pdf(
+        year, month, MONTH_NAMES[month], days, holiday_set,
+        oncall_doctors, session_doctors, req_by_doctor
+    )
+    return send_file(
+        io.BytesIO(pdf_bytes),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"זמינות_{MONTH_NAMES[month]}_{year}.pdf",
     )
 
 

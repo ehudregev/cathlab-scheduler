@@ -104,6 +104,95 @@ def generate_pdf(year, month, month_name, days, holiday_set, entry_map, doctors)
     return bytes(pdf.output())
 
 
+def _initials(name):
+    """Return initials of a Hebrew name: first letter of each word joined with periods."""
+    words = name.strip().split()
+    return ".".join(w[0] for w in words if w) + "." if words else ""
+
+
+def generate_availability_pdf(year, month, month_name, days, holiday_set,
+                               oncall_doctors, session_doctors, req_by_doctor):
+    """
+    PDF table: rows = days of month, columns = כוננות / ססיה.
+    Each cell lists initials of doctors available for assignment that day.
+    Weekends (Fri/Sat) are highlighted in blue.
+    """
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.add_font("Heebo", style="", fname=FONT_PATH)
+    pdf.add_font("Heebo", style="B", fname=FONT_PATH)
+    pdf.add_page()
+    pdf.set_auto_page_break(False)
+    pdf.set_margins(8, 8, 8)
+
+    # Title
+    pdf.set_font("Heebo", "B", 13)
+    pdf.cell(0, 10, bidi(f"זמינות לשיבוץ — {month_name} {year}"),
+             new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.ln(2)
+
+    # Column widths  (A4 portrait = 210mm, margins 8+8)
+    usable = 194  # 210 - 16
+    col_date = 28
+    col_content = (usable - col_date) / 2
+
+    # Header
+    pdf.set_fill_color(50, 100, 180)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Heebo", "B", 9)
+    for label, w in [(bidi("תאריך"), col_date),
+                     (bidi("כוננות"), col_content),
+                     (bidi("ססיה"),   col_content)]:
+        pdf.cell(w, 7, label, border=1, align="C", fill=True)
+    pdf.ln()
+
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Heebo", "", 8)
+
+    # Fit all days on one page (A4 portrait height 297mm, overhead ~27mm, bottom margin 8mm)
+    row_h = min(7.5, (297 - 27 - 8) / max(len(days), 1))
+
+    for day in days:
+        date_str = day.strftime("%Y-%m-%d")
+        is_weekend = day.weekday() in (4, 5)
+        is_holiday = date_str in holiday_set
+
+        if is_holiday:
+            pdf.set_fill_color(255, 220, 150)
+        elif is_weekend:
+            pdf.set_fill_color(200, 220, 255)
+        else:
+            pdf.set_fill_color(245, 245, 245)
+
+        # Available oncall doctors
+        oncall_names = []
+        for doc in oncall_doctors:
+            r = req_by_doctor.get(doc.id)
+            unavail = r.unavailable_oncall if r else set()
+            if date_str not in unavail:
+                oncall_names.append(_initials(doc.name))
+        oncall_text = bidi(" ".join(oncall_names)) if oncall_names else bidi("—")
+
+        # Available session doctors (sessions only on Sun–Thu non-holiday)
+        if is_weekend:
+            session_text = bidi("—")
+        else:
+            session_names = []
+            for doc in session_doctors:
+                r = req_by_doctor.get(doc.id)
+                unavail = r.unavailable_session if r else set()
+                if date_str not in unavail:
+                    session_names.append(_initials(doc.name))
+            session_text = bidi(" ".join(session_names)) if session_names else bidi("—")
+
+        day_label = bidi(f"{day.strftime('%d/%m')} {DAY_NAMES_HE[day.weekday()]}")
+        pdf.cell(col_date,    row_h, day_label,    border=1, align="C", fill=True)
+        pdf.cell(col_content, row_h, oncall_text,  border=1, align="C", fill=True)
+        pdf.cell(col_content, row_h, session_text, border=1, align="C", fill=True)
+        pdf.ln()
+
+    return bytes(pdf.output())
+
+
 def generate_oncall_system_pdf(year, month, month_name, days, holiday_set, virtual_map, doctors, warnings=None):
     """Generate the fictitious 'oncall system input' PDF with swapped doctors."""
 
