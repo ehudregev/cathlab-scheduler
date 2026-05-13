@@ -268,14 +268,19 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             return (month_oncall_count[doc.id] + 2 <= monthly_budget[doc.id]
                     and month_weekend_count[doc.id] < weekend_budget[doc.id])
 
-        # Priority 1: under both caps + no consecutive issue
+        # Priority 1: under caps + won't create a triple (run stays < 3)
         pool = [d for d in oncall_doctors
                 if _wknd_avail(d) and _under_wknd_cap(d)
-                and _run_after(oncall_assigned[d.id], {fri_str, sat_str}) < 4]
-        # Priority 2: under both caps, relax consecutive
+                and _run_after(oncall_assigned[d.id], {fri_str, sat_str}) < 3]
+        # Priority 2: under caps + won't create a quadruple (allows triple)
+        if not pool:
+            pool = [d for d in oncall_doctors
+                    if _wknd_avail(d) and _under_wknd_cap(d)
+                    and _run_after(oncall_assigned[d.id], {fri_str, sat_str}) < 4]
+        # Priority 3: under caps, fully relax consecutive
         if not pool:
             pool = [d for d in oncall_doctors if _wknd_avail(d) and _under_wknd_cap(d)]
-        # Priority 3: raise cap for doctor with fewest cumulative shifts, then retry
+        # Priority 4: raise cap for doctor with fewest cumulative shifts
         if not pool:
             avail = [d for d in oncall_doctors if _wknd_avail(d)]
             if avail:
@@ -293,14 +298,13 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": None})
             continue
 
-        # Sort: equal weight for current-month weekend-fill and total-fill ratios
+        # Sort: spread first (days since last), then fairness
         pool.sort(key=lambda d: (
+            -_days_since_last(oncall_assigned[d.id], fri_str),
             month_weekend_count[d.id] / max(weekend_budget[d.id], 1)
             + month_oncall_count[d.id] / max(monthly_budget[d.id], 1),
-            -_days_since_last(oncall_assigned[d.id], fri_str),
             doc_weekend_availability[d.id],
             doc_exclusive_slots[d.id],
-            _run_after(oncall_assigned[d.id], {fri_str, sat_str}) >= 3,
             -(fri_str in preferred[d.id] or sat_str in preferred[d.id])
         ))
 
@@ -327,21 +331,29 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             return (month_oncall_count[doc.id] < monthly_budget[doc.id]
                     and (not is_special or month_weekend_count[doc.id] < weekend_budget[doc.id]))
 
-        # Priority 1: under both caps + no consecutive issue
+        # Priority 1: under caps + won't create a triple (run stays < 3)
         pool = [
             doc for doc in oncall_doctors
             if date_str not in unavailable[doc.id]
             and _under_day_cap(doc)
-            and _run_after(oncall_assigned[doc.id], {date_str}) < 4
+            and _run_after(oncall_assigned[doc.id], {date_str}) < 3
         ]
-        # Priority 2: under both caps, relax consecutive
+        # Priority 2: under caps + won't create a quadruple (allows triple)
+        if not pool:
+            pool = [
+                doc for doc in oncall_doctors
+                if date_str not in unavailable[doc.id]
+                and _under_day_cap(doc)
+                and _run_after(oncall_assigned[doc.id], {date_str}) < 4
+            ]
+        # Priority 3: under caps, fully relax consecutive
         if not pool:
             pool = [
                 doc for doc in oncall_doctors
                 if date_str not in unavailable[doc.id]
                 and _under_day_cap(doc)
             ]
-        # Priority 3: raise cap for doctor with fewest cumulative shifts
+        # Priority 4: raise cap for doctor with fewest cumulative shifts
         if not pool:
             avail = [doc for doc in oncall_doctors if date_str not in unavailable[doc.id]]
             if avail:
@@ -352,16 +364,15 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                 alerts.append(f"⚠️ תקרה הועלתה ל-{candidate.name} ליום {date_str}")
                 pool = [candidate]
 
-        # Sort: equal weight for current-month weekend-fill and total-fill ratios
+        # Sort: spread first (days since last assignment), then fairness
         def _oncall_sort_key(doc):
             return (
+                -_days_since_last(oncall_assigned[doc.id], date_str),
                 month_weekend_count[doc.id] / max(weekend_budget[doc.id], 1)
                 + month_oncall_count[doc.id] / max(monthly_budget[doc.id], 1),
                 week_oncall_count[doc.id][week_key] >= WEEKLY_ONCALL_CAP,
                 week_oncall_count[doc.id][week_key],
                 total_oncall_count[doc.id],
-                -_days_since_last(oncall_assigned[doc.id], date_str),
-                _run_after(oncall_assigned[doc.id], {date_str}) >= 3,
                 -(date_str in preferred[doc.id])
             )
 
