@@ -664,14 +664,14 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             ]
 
         def sort_key(doc):
-            ratio = session_assigned_count[doc.id] / max(session_budget[doc.id], 1)
+            remaining = session_budget[doc.id] - session_assigned_count[doc.id]
             has_oncall_today = oncall_by_date.get(date_str) == doc.id
             return (
-                week_session_count[doc.id][week_key],  # fewer this week = higher priority
-                -_days_since_last(session_assigned_dates[doc.id], date_str),  # spread across month
+                -remaining,                                                   # most sessions still needed = highest priority
+                week_session_count[doc.id][week_key],                        # fewer this week = spread across weeks
+                -_days_since_last(session_assigned_dates[doc.id], date_str), # spread across month
                 -(date_str in preferred_session[doc.id]),
-                -has_oncall_today,  # prefer doctors already doing on-call today
-                ratio,
+                -has_oncall_today,
             )
 
         # Fill 2 slots with strict weekly cap:
