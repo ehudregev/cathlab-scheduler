@@ -180,15 +180,16 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
 
     # Weekend on-call assignment
     weekend_assigned = {}
-    # weekend_units = number of fri+sat pairs + holiday weekday oncalls (each counts as 1 unit)
+    # weekend_count = cumulative historical weekend units (used only for docs_by_history sort)
     weekend_count = {d.id: oncall_counts[d.id]["weekend_units"] for d in oncall_doctors}
     total_oncall_count = {
         d.id: oncall_counts[d.id]["weekday_oncalls"] + oncall_counts[d.id]["weekend_units"]
         for d in oncall_doctors
     }
 
-    # Current-month on-call count (ALL oncalls: weekday + weekend)
+    # Current-month counters (start at 0 — used for hard caps and sort keys)
     month_oncall_count = {d.id: 0 for d in oncall_doctors}
+    month_weekend_count = {d.id: 0 for d in oncall_doctors}
 
     # Weekly on-call tracking — hard cap to prevent clustering in one week
     week_oncall_count = defaultdict(lambda: defaultdict(int))
@@ -269,7 +270,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
 
         def _under_wknd_cap(doc):
             return (month_oncall_count[doc.id] + 2 <= monthly_budget[doc.id]
-                    and weekend_count[doc.id] < weekend_budget[doc.id])
+                    and month_weekend_count[doc.id] < weekend_budget[doc.id])
 
         # Priority 1: under both caps + no consecutive issue
         pool = [d for d in oncall_doctors
@@ -282,7 +283,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         if not pool:
             avail = [d for d in oncall_doctors if _wknd_avail(d)]
             if avail:
-                candidate = min(avail, key=lambda d: (total_oncall_count[d.id], weekend_count[d.id]))
+                candidate = min(avail, key=lambda d: (total_oncall_count[d.id], month_weekend_count[d.id]))
                 monthly_budget[candidate.id] += 1
                 weekend_budget[candidate.id] += 1
                 alerts.append(
@@ -296,9 +297,9 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": None})
             continue
 
-        # Sort: equal weight for weekend-fill and total-fill ratios
+        # Sort: equal weight for current-month weekend-fill and total-fill ratios
         pool.sort(key=lambda d: (
-            weekend_count[d.id] / max(weekend_budget[d.id], 1)
+            month_weekend_count[d.id] / max(weekend_budget[d.id], 1)
             + month_oncall_count[d.id] / max(monthly_budget[d.id], 1),
             -_days_since_last(oncall_assigned[d.id], fri_str),
             doc_weekend_availability[d.id],
@@ -311,6 +312,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         weekend_assigned[fri_str] = assigned.id
         weekend_assigned[sat_str] = assigned.id
         weekend_count[assigned.id] += 1
+        month_weekend_count[assigned.id] += 1
         total_oncall_count[assigned.id] += 2
         month_oncall_count[assigned.id] += 2  # fri + sat = 2 oncall days
         oncall_assigned[assigned.id].update({fri_str, sat_str})
@@ -327,7 +329,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
 
         def _under_day_cap(doc):
             return (month_oncall_count[doc.id] < monthly_budget[doc.id]
-                    and (not is_special or weekend_count[doc.id] < weekend_budget[doc.id]))
+                    and (not is_special or month_weekend_count[doc.id] < weekend_budget[doc.id]))
 
         # Priority 1: under both caps + no consecutive issue
         pool = [
@@ -354,10 +356,10 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                 alerts.append(f"⚠️ תקרה הועלתה ל-{candidate.name} ליום {date_str}")
                 pool = [candidate]
 
-        # Sort: equal weight for weekend-fill and total-fill ratios; weekly cap is soft tiebreaker
+        # Sort: equal weight for current-month weekend-fill and total-fill ratios
         def _oncall_sort_key(doc):
             return (
-                weekend_count[doc.id] / max(weekend_budget[doc.id], 1)
+                month_weekend_count[doc.id] / max(weekend_budget[doc.id], 1)
                 + month_oncall_count[doc.id] / max(monthly_budget[doc.id], 1),
                 week_oncall_count[doc.id][week_key] >= WEEKLY_ONCALL_CAP,
                 week_oncall_count[doc.id][week_key],
@@ -375,6 +377,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             month_oncall_count[assigned.id] += 1
             if is_special:
                 weekend_count[assigned.id] += 1
+                month_weekend_count[assigned.id] += 1
             oncall_assigned[assigned.id].add(date_str)
             week_oncall_count[assigned.id][week_key] += 1
             entries.append({"date_str": date_str, "entry_type": "oncall", "doctor_id": assigned.id})
@@ -410,7 +413,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                     and fri_str not in unavailable[p.id]
                     and sat_str not in unavailable[p.id]
                     and month_oncall_count[p.id] + 2 <= monthly_budget[p.id]
-                    and weekend_count[p.id] < weekend_budget[p.id]
+                    and month_weekend_count[p.id] < weekend_budget[p.id]
                 ]
                 if partners:
                     partner = min(partners, key=lambda p: total_oncall_count[p.id])
@@ -422,6 +425,8 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                     total_oncall_count[partner.id] += 2
                     weekend_count[doc.id] -= 1
                     weekend_count[partner.id] += 1
+                    month_weekend_count[doc.id] -= 1
+                    month_weekend_count[partner.id] += 1
                     oncall_assigned[doc.id].discard(fri_str)
                     oncall_assigned[doc.id].discard(sat_str)
                     oncall_assigned[partner.id].update({fri_str, sat_str})
@@ -447,7 +452,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                     if p.id != doc.id
                     and date_str not in unavailable[p.id]
                     and month_oncall_count[p.id] < monthly_budget[p.id]
-                    and (not is_special_swap or weekend_count[p.id] < weekend_budget[p.id])
+                    and (not is_special_swap or month_weekend_count[p.id] < weekend_budget[p.id])
                 ]
                 if partners:
                     partner = min(partners, key=lambda p: total_oncall_count[p.id])
@@ -461,6 +466,8 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                     if is_special_swap:
                         weekend_count[doc.id] -= 1
                         weekend_count[partner.id] += 1
+                        month_weekend_count[doc.id] -= 1
+                        month_weekend_count[partner.id] += 1
                     alerts.append(f"🔄 swap: {doc.name} ↔ {partner.name} ({date_str})")
                     swapped = True
                     break
@@ -473,7 +480,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         alerts.append(
             f"DEBUG סוף-כוננויות {doc.name}: "
             f"{month_oncall_count[doc.id]}/{monthly_budget[doc.id]} "
-            f"סוף-שבוע={weekend_count[doc.id]}/{weekend_budget[doc.id]}"
+            f"סוף-שבוע={month_weekend_count[doc.id]}/{weekend_budget[doc.id]}"
         )
 
     # ── SESSION SCHEDULING ──────────────────────────────────────────────────
