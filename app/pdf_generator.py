@@ -104,10 +104,10 @@ def generate_pdf(year, month, month_name, days, holiday_set, entry_map, doctors)
     return bytes(pdf.output())
 
 
-def _initials(name):
-    """Return initials of a Hebrew name: first letter of each word joined with periods."""
+def _first_name(name):
+    """Return the first word (first name) of a doctor's name."""
     words = name.strip().split()
-    return ".".join(w[0] for w in words if w) + "." if words else ""
+    return words[0] if words else name
 
 
 def generate_availability_pdf(year, month, month_name, days, holiday_set,
@@ -169,7 +169,7 @@ def generate_availability_pdf(year, month, month_name, days, holiday_set,
             r = req_by_doctor.get(doc.id)
             unavail = r.unavailable_oncall if r else set()
             if date_str not in unavail:
-                oncall_names.append(_initials(doc.name))
+                oncall_names.append(_first_name(doc.name))
         oncall_text = bidi(" ".join(oncall_names)) if oncall_names else bidi("—")
 
         # Available session doctors (sessions only on Sun–Thu non-holiday)
@@ -181,7 +181,7 @@ def generate_availability_pdf(year, month, month_name, days, holiday_set,
                 r = req_by_doctor.get(doc.id)
                 unavail = r.unavailable_session if r else set()
                 if date_str not in unavail:
-                    session_names.append(_initials(doc.name))
+                    session_names.append(_first_name(doc.name))
             session_text = bidi(" ".join(session_names)) if session_names else bidi("—")
 
         day_label = bidi(f"{day.strftime('%d/%m')} {DAY_NAMES_HE[day.weekday()]}")
