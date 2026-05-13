@@ -581,13 +581,19 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     session1_so_far = {doc.id: session_hist[doc.id]["session1"] for doc in session_doctors}
 
     num_session_days = len(session_days)
+    # Track which doctors set an explicit session count (so fallbacks respect their wish)
+    has_explicit_session_request = {}
     for doc in session_doctors:
         r = req_by_doctor.get(doc.id)
         if r and r.desired_sessions is not None and r.desired_sessions > 0:
             session_budget[doc.id] = r.desired_sessions
+            has_explicit_session_request[doc.id] = True
         else:
-            # No request or no preference — give a fair default share
-            session_budget[doc.id] = max(1, round(num_session_days * 2 / max(len(session_doctors), 1)))
+            # Use ceil so total budget always covers all session slots
+            session_budget[doc.id] = max(1, math.ceil(
+                num_session_days * 2 / max(len(session_doctors), 1)
+            ))
+            has_explicit_session_request[doc.id] = False
 
     # Pre-scan: identify scarce days and reserve doctor capacity for them
     # A "scarce day" has few initially-available doctors (ignoring budget/consecutive).
@@ -648,6 +654,14 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                 if date_str not in unavailable_session[doc.id]
                 and session_assigned_count[doc.id] < session_budget[doc.id]
             ]
+        # Final fallback: relax budget only for doctors without explicit session requests
+        # (respects desired_sessions hard cap for doctors who set one)
+        if not available:
+            available = [
+                doc for doc in session_doctors
+                if date_str not in unavailable_session[doc.id]
+                and not has_explicit_session_request[doc.id]
+            ]
 
         def sort_key(doc):
             ratio = session_assigned_count[doc.id] / max(session_budget[doc.id], 1)
@@ -680,6 +694,13 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             selected += fallback
         if len(selected) < 2:
             selected += sorted(tier3, key=sort_key)[:2 - len(selected)]
+        # Absolute last resort: ignore weekly cap, never exceed explicit budget caps
+        if len(selected) < 2:
+            last_resort = [d for d in available if d not in selected]
+            extra = sorted(last_resort, key=sort_key)[:2 - len(selected)]
+            for d in extra:
+                alerts.append(f"⚠️ {d.name} שובץ לססיה ב-{date_str} מעל בודג׳ט/תקרה שבועית")
+            selected += extra
 
         # If only one doctor available and it's דני אליאן, don't assign (needs a partner)
         if len(selected) == 1 and selected[0].name == "דני אליאן":
