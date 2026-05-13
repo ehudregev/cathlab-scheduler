@@ -480,6 +480,90 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             if not swapped:
                 break
 
+    # ── REBALANCE PASS: enforce max−min ≤ 1 across all doctors ──────────────
+    # The swap pass above only fixes over-budget doctors. If cap-raises created
+    # asymmetry (one doctor at 7, another at 5), this pass corrects it.
+    for _ in range(len(oncall_doctors) * 5):  # bounded iterations
+        if not oncall_doctors:
+            break
+        max_doc = max(oncall_doctors, key=lambda d: month_oncall_count[d.id])
+        min_doc = min(oncall_doctors, key=lambda d: month_oncall_count[d.id])
+        if month_oncall_count[max_doc.id] - month_oncall_count[min_doc.id] <= 1:
+            break
+
+        swapped = False
+
+        # Try moving a single weekday shift from max_doc to min_doc
+        for idx, entry in enumerate(entries):
+            if entry["entry_type"] != "oncall" or entry["doctor_id"] != max_doc.id:
+                continue
+            d_obj = date.fromisoformat(entry["date_str"])
+            if d_obj.weekday() in (4, 5):
+                continue  # handle Fri/Sat as a pair below
+            ds = entry["date_str"]
+            is_sp = ds in holiday_set
+            if ds in unavailable[min_doc.id]:
+                continue
+            if is_sp and month_weekend_count[min_doc.id] >= weekend_budget[min_doc.id]:
+                continue
+            entry["doctor_id"] = min_doc.id
+            month_oncall_count[max_doc.id] -= 1
+            month_oncall_count[min_doc.id] += 1
+            total_oncall_count[max_doc.id] -= 1
+            total_oncall_count[min_doc.id] += 1
+            oncall_assigned[max_doc.id].discard(ds)
+            oncall_assigned[min_doc.id].add(ds)
+            if is_sp:
+                weekend_count[max_doc.id] -= 1
+                weekend_count[min_doc.id] += 1
+                month_weekend_count[max_doc.id] -= 1
+                month_weekend_count[min_doc.id] += 1
+            alerts.append(f"🔄 איזון: {max_doc.name} → {min_doc.name} ({ds})")
+            swapped = True
+            break
+
+        if not swapped:
+            # Try moving a Fri+Sat pair (counts as 2 toward total)
+            for fri_idx, fri_entry in enumerate(entries):
+                if (fri_entry["entry_type"] != "oncall"
+                        or fri_entry["doctor_id"] != max_doc.id
+                        or date.fromisoformat(fri_entry["date_str"]).weekday() != 4):
+                    continue
+                fri_s = fri_entry["date_str"]
+                sat_s = (date.fromisoformat(fri_s) + timedelta(days=1)).strftime("%Y-%m-%d")
+                sat_idx = next(
+                    (i for i, e in enumerate(entries)
+                     if e["entry_type"] == "oncall" and e["date_str"] == sat_s), None
+                )
+                if sat_idx is None:
+                    continue
+                if fri_s in unavailable[min_doc.id] or sat_s in unavailable[min_doc.id]:
+                    continue
+                if month_weekend_count[min_doc.id] >= weekend_budget[min_doc.id]:
+                    continue
+                entries[fri_idx]["doctor_id"] = min_doc.id
+                entries[sat_idx]["doctor_id"] = min_doc.id
+                month_oncall_count[max_doc.id] -= 2
+                month_oncall_count[min_doc.id] += 2
+                total_oncall_count[max_doc.id] -= 2
+                total_oncall_count[min_doc.id] += 2
+                weekend_count[max_doc.id] -= 1
+                weekend_count[min_doc.id] += 1
+                month_weekend_count[max_doc.id] -= 1
+                month_weekend_count[min_doc.id] += 1
+                oncall_assigned[max_doc.id].discard(fri_s)
+                oncall_assigned[max_doc.id].discard(sat_s)
+                oncall_assigned[min_doc.id].update({fri_s, sat_s})
+                alerts.append(f"🔄 איזון: {max_doc.name} → {min_doc.name} (סוף שבוע {fri_s})")
+                swapped = True
+                break
+
+        if not swapped:
+            alerts.append(
+                f"⚠️ לא ניתן לאזן: {max_doc.name}({month_oncall_count[max_doc.id]}) "
+                f"vs {min_doc.name}({month_oncall_count[min_doc.id]})"
+            )
+            break
 
     # ── SESSION SCHEDULING ──────────────────────────────────────────────────
 
