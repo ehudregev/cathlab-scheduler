@@ -196,55 +196,41 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     num_weekends = len(weekend_units)
     num_oncall_docs = len(oncall_doctors)
     import math
-    # Hard cap: no doctor gets more than ceil(weekends/doctors) unless forced
-    weekend_cap = math.ceil(num_weekends / max(num_oncall_docs, 1)) if num_oncall_docs else 0
+    n = max(num_oncall_docs, 1)
 
-    # Hard weekly cap: 2 weekday oncalls per doctor per week
-    WEEKLY_ONCALL_CAP = max(1, math.floor(5 / max(num_oncall_docs, 1)) + 1)
+    # Hard weekly cap: soft limit to prevent clustering within a single week
+    WEEKLY_ONCALL_CAP = max(1, math.floor(5 / n) + 1)
 
-    # Per-doctor monthly budget based on actual availability.
-    # Each doctor's share = total_oncall_days * (their_available_days / total_available_days).
-    # This ensures doctors with many unavailable days get a smaller budget,
-    # and the totals add up to the actual number of days to fill.
-    doc_available_days = {}
-    for doc in oncall_doctors:
-        doc_available_days[doc.id] = sum(
-            1 for d in days if d.strftime("%Y-%m-%d") not in unavailable[doc.id]
-        )
-    total_available = sum(doc_available_days.values())
     total_oncall_days = len(days)
 
-    # Compute fractional fair share per doctor, then distribute integer budgets
-    # so that sum(budgets) == total_oncall_days
+    # Equal-share budgets: floor(T/n) or ceil(T/n) per doctor.
+    # Doctors with fewer cumulative shifts get ceil (balance across months).
     docs_by_history = sorted(oncall_doctors, key=lambda d: total_oncall_count[d.id])
-    if total_available == 0:
-        monthly_budget = {doc.id: 0 for doc in oncall_doctors}
-    else:
-        # Assign floor first
-        monthly_budget = {}
-        for doc in oncall_doctors:
-            monthly_budget[doc.id] = int(total_oncall_days * doc_available_days[doc.id] / total_available)
-        # Distribute remainder slots to doctors with most fractional leftover,
-        # tiebreak by fewest historical oncalls
-        remainder = total_oncall_days - sum(monthly_budget.values())
-        fractions = sorted(
-            oncall_doctors,
-            key=lambda d: (
-                -(total_oncall_days * doc_available_days[d.id] / total_available - monthly_budget[d.id]),
-                total_oncall_count[d.id]
-            )
-        )
-        for i in range(remainder):
-            monthly_budget[fractions[i].id] += 1
+    base_total = total_oncall_days // n
+    extra_total = total_oncall_days % n
+    monthly_budget = {
+        doc.id: base_total + (1 if i < extra_total else 0)
+        for i, doc in enumerate(docs_by_history)
+    }
 
-    base_budget = total_oncall_days // max(num_oncall_docs, 1)
-    remainder_dbg = total_oncall_days % max(num_oncall_docs, 1)
+    # Weekend-units budget (Fri+Sat pairs + holiday weekdays, each = 1 unit).
+    # Same floor/ceil distribution, same history-based priority.
+    holiday_weekday_count = sum(
+        1 for d in weekday_oncall_days_all
+        if d.strftime("%Y-%m-%d") in holiday_set
+    )
+    total_weekend_units_in_month = num_weekends + holiday_weekday_count
+    base_wknd = total_weekend_units_in_month // n
+    extra_wknd = total_weekend_units_in_month % n
+    weekend_budget = {
+        doc.id: base_wknd + (1 if i < extra_wknd else 0)
+        for i, doc in enumerate(docs_by_history)
+    }
 
-    # DEBUG: show budgets and history in alerts
-    alerts.append(f"DEBUG בסיס={base_budget} שאריות={remainder_dbg} cap_שבועי={WEEKLY_ONCALL_CAP}")
+    # DEBUG: show budgets
+    alerts.append(f"DEBUG base={base_total} extra={extra_total} wknd_base={base_wknd} wknd_extra={extra_wknd} cap_שבועי={WEEKLY_ONCALL_CAP}")
     for doc in docs_by_history:
-        n_unavail = len(unavailable[doc.id])
-        alerts.append(f"DEBUG {doc.name}: זמין={doc_available_days[doc.id]}ימים לא_זמין={n_unavail} בודג׳ט={monthly_budget[doc.id]}")
+        alerts.append(f"DEBUG {doc.name}: budget={monthly_budget[doc.id]} wknd_budget={weekend_budget[doc.id]}")
 
     # Precompute availability per weekend slot
     avail_per_slot = []
@@ -277,38 +263,43 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         fri_str = fri.strftime("%Y-%m-%d")
         sat_str = sat.strftime("%Y-%m-%d")
 
-        # Priority 1: under budget AND not consecutive-blocked
-        pool = [
-            doc for doc in oncall_doctors
-            if fri_str not in unavailable[doc.id]
-            and sat_str not in unavailable[doc.id]
-            and month_oncall_count[doc.id] + 2 <= monthly_budget[doc.id]
-            and _run_after(oncall_assigned[doc.id], {fri_str, sat_str}) < 4
-        ]
-        # Priority 2: under budget, relax consecutive
+        def _wknd_avail(doc):
+            return (fri_str not in unavailable[doc.id]
+                    and sat_str not in unavailable[doc.id])
+
+        def _under_wknd_cap(doc):
+            return (month_oncall_count[doc.id] + 2 <= monthly_budget[doc.id]
+                    and weekend_count[doc.id] < weekend_budget[doc.id])
+
+        # Priority 1: under both caps + no consecutive issue
+        pool = [d for d in oncall_doctors
+                if _wknd_avail(d) and _under_wknd_cap(d)
+                and _run_after(oncall_assigned[d.id], {fri_str, sat_str}) < 4]
+        # Priority 2: under both caps, relax consecutive
         if not pool:
-            pool = [
-                doc for doc in oncall_doctors
-                if fri_str not in unavailable[doc.id]
-                and sat_str not in unavailable[doc.id]
-                and month_oncall_count[doc.id] + 2 <= monthly_budget[doc.id]
-            ]
-        # Priority 3: last resort
+            pool = [d for d in oncall_doctors if _wknd_avail(d) and _under_wknd_cap(d)]
+        # Priority 3: raise cap for doctor with fewest cumulative shifts, then retry
         if not pool:
-            pool = [
-                doc for doc in oncall_doctors
-                if fri_str not in unavailable[doc.id] and sat_str not in unavailable[doc.id]
-            ]
+            avail = [d for d in oncall_doctors if _wknd_avail(d)]
+            if avail:
+                candidate = min(avail, key=lambda d: (total_oncall_count[d.id], weekend_count[d.id]))
+                monthly_budget[candidate.id] += 1
+                weekend_budget[candidate.id] += 1
+                alerts.append(
+                    f"⚠️ תקרה הועלתה ל-{candidate.name} לסוף שבוע {fri_str} (אין רופא בגבולות)"
+                )
+                pool = [candidate]
+
         if not pool:
             alerts.append(f"לא נמצא כונן זמין לסוף שבוע {fri_str}")
             entries.append({"date_str": fri_str, "entry_type": "oncall", "doctor_id": None})
             entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": None})
             continue
 
+        # Sort: equal weight for weekend-fill and total-fill ratios
         pool.sort(key=lambda d: (
-            month_oncall_count[d.id] - monthly_budget[d.id],   # furthest under budget first
-            weekend_count[d.id] >= weekend_cap,
-            weekend_count[d.id],
+            weekend_count[d.id] / max(weekend_budget[d.id], 1)
+            + month_oncall_count[d.id] / max(monthly_budget[d.id], 1),
             -_days_since_last(oncall_assigned[d.id], fri_str),
             doc_weekend_availability[d.id],
             doc_exclusive_slots[d.id],
@@ -334,41 +325,49 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         is_special = d.weekday() in (4, 5) or date_str in holiday_set
         week_key = israeli_week_key(d)
 
-        # Build pool respecting budget first, relax consecutive constraint only if needed
-        # Priority 1: under budget AND not consecutive-blocked
+        def _under_day_cap(doc):
+            return (month_oncall_count[doc.id] < monthly_budget[doc.id]
+                    and (not is_special or weekend_count[doc.id] < weekend_budget[doc.id]))
+
+        # Priority 1: under both caps + no consecutive issue
         pool = [
             doc for doc in oncall_doctors
             if date_str not in unavailable[doc.id]
-            and month_oncall_count[doc.id] < monthly_budget[doc.id]
+            and _under_day_cap(doc)
             and _run_after(oncall_assigned[doc.id], {date_str}) < 4
         ]
-        # Priority 2: under budget, relax consecutive constraint
+        # Priority 2: under both caps, relax consecutive
         if not pool:
             pool = [
                 doc for doc in oncall_doctors
                 if date_str not in unavailable[doc.id]
-                and month_oncall_count[doc.id] < monthly_budget[doc.id]
+                and _under_day_cap(doc)
             ]
-        # Priority 3: all available (budget exceeded — last resort only)
+        # Priority 3: raise cap for doctor with fewest cumulative shifts
         if not pool:
-            pool = [doc for doc in oncall_doctors if date_str not in unavailable[doc.id]]
+            avail = [doc for doc in oncall_doctors if date_str not in unavailable[doc.id]]
+            if avail:
+                candidate = min(avail, key=lambda d: (total_oncall_count[d.id], month_oncall_count[d.id]))
+                monthly_budget[candidate.id] += 1
+                if is_special:
+                    weekend_budget[candidate.id] += 1
+                alerts.append(f"⚠️ תקרה הועלתה ל-{candidate.name} ליום {date_str}")
+                pool = [candidate]
 
-        # Weekly cap is SOFT — only affects sort order, does not exclude
-        def _oncall_sort_key(doc, is_special):
-            # Primary: distance from budget (negative = furthest under budget = highest priority)
-            budget_gap = month_oncall_count[doc.id] - monthly_budget[doc.id]
+        # Sort: equal weight for weekend-fill and total-fill ratios; weekly cap is soft tiebreaker
+        def _oncall_sort_key(doc):
             return (
-                budget_gap,
+                weekend_count[doc.id] / max(weekend_budget[doc.id], 1)
+                + month_oncall_count[doc.id] / max(monthly_budget[doc.id], 1),
                 week_oncall_count[doc.id][week_key] >= WEEKLY_ONCALL_CAP,
                 week_oncall_count[doc.id][week_key],
-                weekend_count[doc.id] if is_special else 0,
                 total_oncall_count[doc.id],
                 -_days_since_last(oncall_assigned[doc.id], date_str),
                 _run_after(oncall_assigned[doc.id], {date_str}) >= 3,
                 -(date_str in preferred[doc.id])
             )
 
-        candidates = sorted(pool, key=lambda doc: _oncall_sort_key(doc, is_special))
+        candidates = sorted(pool, key=_oncall_sort_key)
 
         if candidates:
             assigned = candidates[0]
@@ -383,9 +382,99 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             alerts.append(f"לא נמצא כונן זמין ליום {date_str}")
             entries.append({"date_str": date_str, "entry_type": "oncall", "doctor_id": None})
 
+    # ── SWAP PASS: fix any remaining over-budget assignments ────────────────
+    for doc in list(oncall_doctors):
+        while month_oncall_count[doc.id] > monthly_budget[doc.id]:
+            swapped = False
+
+            # Try swapping a full Fri+Sat pair first (contributes 2 to total)
+            fri_indices = [
+                (i, e) for i, e in enumerate(entries)
+                if e["entry_type"] == "oncall"
+                and e["doctor_id"] == doc.id
+                and date.fromisoformat(e["date_str"]).weekday() == 4
+            ]
+            for fri_idx, fri_entry in fri_indices:
+                fri_str = fri_entry["date_str"]
+                sat_str = (date.fromisoformat(fri_str) + timedelta(days=1)).strftime("%Y-%m-%d")
+                sat_idx = next(
+                    (i for i, e in enumerate(entries)
+                     if e["entry_type"] == "oncall" and e["date_str"] == sat_str),
+                    None
+                )
+                if sat_idx is None:
+                    continue
+                partners = [
+                    p for p in oncall_doctors
+                    if p.id != doc.id
+                    and fri_str not in unavailable[p.id]
+                    and sat_str not in unavailable[p.id]
+                    and month_oncall_count[p.id] + 2 <= monthly_budget[p.id]
+                    and weekend_count[p.id] < weekend_budget[p.id]
+                ]
+                if partners:
+                    partner = min(partners, key=lambda p: total_oncall_count[p.id])
+                    entries[fri_idx]["doctor_id"] = partner.id
+                    entries[sat_idx]["doctor_id"] = partner.id
+                    month_oncall_count[doc.id] -= 2
+                    month_oncall_count[partner.id] += 2
+                    total_oncall_count[doc.id] -= 2
+                    total_oncall_count[partner.id] += 2
+                    weekend_count[doc.id] -= 1
+                    weekend_count[partner.id] += 1
+                    oncall_assigned[doc.id].discard(fri_str)
+                    oncall_assigned[doc.id].discard(sat_str)
+                    oncall_assigned[partner.id].update({fri_str, sat_str})
+                    alerts.append(f"🔄 swap סוף שבוע: {doc.name} ↔ {partner.name} ({fri_str})")
+                    swapped = True
+                    break
+
+            if swapped:
+                continue
+
+            # Try swapping a single weekday entry
+            weekday_indices = [
+                (i, e) for i, e in enumerate(entries)
+                if e["entry_type"] == "oncall"
+                and e["doctor_id"] == doc.id
+                and date.fromisoformat(e["date_str"]).weekday() not in (4, 5)
+            ]
+            for idx, entry in weekday_indices:
+                date_str = entry["date_str"]
+                is_special_swap = date_str in holiday_set
+                partners = [
+                    p for p in oncall_doctors
+                    if p.id != doc.id
+                    and date_str not in unavailable[p.id]
+                    and month_oncall_count[p.id] < monthly_budget[p.id]
+                    and (not is_special_swap or weekend_count[p.id] < weekend_budget[p.id])
+                ]
+                if partners:
+                    partner = min(partners, key=lambda p: total_oncall_count[p.id])
+                    entries[idx]["doctor_id"] = partner.id
+                    month_oncall_count[doc.id] -= 1
+                    month_oncall_count[partner.id] += 1
+                    total_oncall_count[doc.id] -= 1
+                    total_oncall_count[partner.id] += 1
+                    oncall_assigned[doc.id].discard(date_str)
+                    oncall_assigned[partner.id].add(date_str)
+                    if is_special_swap:
+                        weekend_count[doc.id] -= 1
+                        weekend_count[partner.id] += 1
+                    alerts.append(f"🔄 swap: {doc.name} ↔ {partner.name} ({date_str})")
+                    swapped = True
+                    break
+
+            if not swapped:
+                break
+
     # DEBUG: final oncall counts
     for doc in oncall_doctors:
-        alerts.append(f"DEBUG סוף-כוננויות {doc.name}: {month_oncall_count[doc.id]}/{monthly_budget[doc.id]}")
+        alerts.append(
+            f"DEBUG סוף-כוננויות {doc.name}: "
+            f"{month_oncall_count[doc.id]}/{monthly_budget[doc.id]} "
+            f"סוף-שבוע={weekend_count[doc.id]}/{weekend_budget[doc.id]}"
+        )
 
     # ── SESSION SCHEDULING ──────────────────────────────────────────────────
 
