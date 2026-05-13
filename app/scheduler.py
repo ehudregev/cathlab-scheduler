@@ -25,18 +25,19 @@ def _max_run(date_strs):
 
 
 def _days_since_last(assigned_dates, current_date_str):
-    """Return number of calendar days since the doctor's last assignment.
+    """Return calendar days since the doctor's last *past* assignment.
 
-    If no assignments yet, return a large number (999) so the doctor is
-    preferred for early spreading.  A higher value means the doctor hasn't
-    been assigned in a long time — useful for spreading assignments across
-    the whole month.
+    Only considers dates on or before current_date_str so that pre-assigned
+    weekend slots later in the month don't suppress a doctor's weekday priority.
+    Returns 999 if no past assignments exist (doctor treated as fresh).
     """
     if not assigned_dates:
         return 999
     cur = date.fromisoformat(current_date_str)
-    last = max(date.fromisoformat(s) for s in assigned_dates)
-    return (cur - last).days
+    past = [date.fromisoformat(s) for s in assigned_dates if date.fromisoformat(s) <= cur]
+    if not past:
+        return 999
+    return (cur - max(past)).days
 
 
 def _run_after(existing, new_dates):
@@ -298,12 +299,11 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": None})
             continue
 
-        # Sort: spread first (days since last), then fairness
+        # Sort: spread across month first, then fairness
         pool.sort(key=lambda d: (
             -_days_since_last(oncall_assigned[d.id], fri_str),
             month_weekend_count[d.id] / max(weekend_budget[d.id], 1)
             + month_oncall_count[d.id] / max(monthly_budget[d.id], 1),
-            doc_weekend_availability[d.id],
             doc_exclusive_slots[d.id],
             -(fri_str in preferred[d.id] or sat_str in preferred[d.id])
         ))
@@ -364,15 +364,13 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                 alerts.append(f"⚠️ תקרה הועלתה ל-{candidate.name} ליום {date_str}")
                 pool = [candidate]
 
-        # Sort: spread first (days since last assignment), then fairness
+        # Sort: spread across month and weeks first, then fairness
         def _oncall_sort_key(doc):
             return (
-                -_days_since_last(oncall_assigned[doc.id], date_str),
+                week_oncall_count[doc.id][week_key],          # prefer doctors with fewer shifts this week
+                -_days_since_last(oncall_assigned[doc.id], date_str),  # spread across month
                 month_weekend_count[doc.id] / max(weekend_budget[doc.id], 1)
                 + month_oncall_count[doc.id] / max(monthly_budget[doc.id], 1),
-                week_oncall_count[doc.id][week_key] >= WEEKLY_ONCALL_CAP,
-                week_oncall_count[doc.id][week_key],
-                total_oncall_count[doc.id],
                 -(date_str in preferred[doc.id])
             )
 
