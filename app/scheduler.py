@@ -422,15 +422,24 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                 return wday < 1   # weekend week: at most 1 weekday on-call
             return wday < 2       # regular week: at most 2 weekday on-calls
 
-        # Priority 1: under caps + consecutive < 3 + weekly weekday cap
+        # Priority 1: no consecutive days at all + weekly weekday cap (best case)
         pool = [
             doc for doc in oncall_doctors
             if date_str not in unavailable[doc.id]
             and _under_day_cap(doc)
-            and _run_after(oncall_assigned[doc.id], {date_str}) < 3
+            and _run_after(oncall_assigned[doc.id], {date_str}) < 2
             and _weekly_weekday_ok(doc)
         ]
-        # Priority 2: under caps + consecutive < 4 + weekly weekday cap
+        # Priority 2: allow a pair (2 consecutive) + weekly weekday cap
+        if not pool:
+            pool = [
+                doc for doc in oncall_doctors
+                if date_str not in unavailable[doc.id]
+                and _under_day_cap(doc)
+                and _run_after(oncall_assigned[doc.id], {date_str}) < 3
+                and _weekly_weekday_ok(doc)
+            ]
+        # Priority 3: allow a triple (3 consecutive) + weekly weekday cap
         if not pool:
             pool = [
                 doc for doc in oncall_doctors
@@ -439,7 +448,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                 and _run_after(oncall_assigned[doc.id], {date_str}) < 4
                 and _weekly_weekday_ok(doc)
             ]
-        # Priority 3: under caps + weekly weekday cap (relax consecutive)
+        # Priority 4: relax consecutive fully, keep weekly weekday cap
         if not pool:
             pool = [
                 doc for doc in oncall_doctors
