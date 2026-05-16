@@ -628,6 +628,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         swapped = False
 
         # ── Attempt 1: direct weekday shift src → tgt ──────────────────────
+        # First pass: respect weekly weekday cap for tgt
         for src in src_docs:
             for tgt in tgt_docs:
                 for idx, entry in enumerate(entries):
@@ -641,11 +642,24 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                         continue
                     if is_sp and month_weekend_count[tgt.id] >= weekend_budget[tgt.id]:
                         continue
+                    # Weekly weekday cap check for tgt
+                    d_week_key = israeli_week_key(date.fromisoformat(ds))
+                    tgt_wday = week_weekday_count[tgt.id][d_week_key]
+                    tgt_weekend = week_oncall_count[tgt.id][d_week_key] - tgt_wday
+                    tgt_cap = 1 if tgt_weekend > 0 else 2
+                    if tgt_wday >= tgt_cap:
+                        continue
+                    # Weekly weekday cap check for src (after removal)
+                    src_wday = week_weekday_count[src.id][d_week_key]
                     entry["doctor_id"] = tgt.id
                     month_oncall_count[src.id] -= 1
                     month_oncall_count[tgt.id] += 1
                     total_oncall_count[src.id] -= 1
                     total_oncall_count[tgt.id] += 1
+                    week_weekday_count[src.id][d_week_key] -= 1
+                    week_weekday_count[tgt.id][d_week_key] += 1
+                    week_oncall_count[src.id][d_week_key] -= 1
+                    week_oncall_count[tgt.id][d_week_key] += 1
                     oncall_assigned[src.id].discard(ds)
                     oncall_assigned[tgt.id].add(ds)
                     if is_sp:
@@ -660,6 +674,46 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                     break
             if swapped:
                 break
+
+        # Attempt 1b: same but ignore weekly cap (last resort before 2-hop)
+        if not swapped:
+            for src in src_docs:
+                for tgt in tgt_docs:
+                    for idx, entry in enumerate(entries):
+                        if entry["entry_type"] != "oncall" or entry["doctor_id"] != src.id:
+                            continue
+                        if date.fromisoformat(entry["date_str"]).weekday() in (4, 5):
+                            continue
+                        ds = entry["date_str"]
+                        is_sp = ds in holiday_set
+                        if ds in unavailable[tgt.id]:
+                            continue
+                        if is_sp and month_weekend_count[tgt.id] >= weekend_budget[tgt.id]:
+                            continue
+                        d_week_key = israeli_week_key(date.fromisoformat(ds))
+                        entry["doctor_id"] = tgt.id
+                        month_oncall_count[src.id] -= 1
+                        month_oncall_count[tgt.id] += 1
+                        total_oncall_count[src.id] -= 1
+                        total_oncall_count[tgt.id] += 1
+                        week_weekday_count[src.id][d_week_key] -= 1
+                        week_weekday_count[tgt.id][d_week_key] += 1
+                        week_oncall_count[src.id][d_week_key] -= 1
+                        week_oncall_count[tgt.id][d_week_key] += 1
+                        oncall_assigned[src.id].discard(ds)
+                        oncall_assigned[tgt.id].add(ds)
+                        if is_sp:
+                            weekend_count[src.id] -= 1
+                            weekend_count[tgt.id] += 1
+                            month_weekend_count[src.id] -= 1
+                            month_weekend_count[tgt.id] += 1
+                        alerts.append(f"🔄 איזון (ללא מכסה שבועית): {src.name} → {tgt.name} ({ds})")
+                        swapped = True
+                        break
+                    if swapped:
+                        break
+                if swapped:
+                    break
 
         # ── Attempt 2: direct Fri+Sat pair src → tgt ───────────────────────
         if not swapped:
@@ -714,7 +768,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             for src in src_docs:
                 for tgt in tgt_docs:
                     for mid in mid_docs:
-                        # Find D1: src's weekday that mid can take
+                        # Find D1: src's weekday that mid can take (respecting mid's weekly cap)
                         d1_idx, d1_ds = None, None
                         for idx, e in enumerate(entries):
                             if e["entry_type"] != "oncall" or e["doctor_id"] != src.id:
@@ -724,11 +778,18 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                             ds = e["date_str"]
                             if ds in unavailable[mid.id]:
                                 continue
+                            # Weekly cap check for mid receiving D1
+                            d1_wk = israeli_week_key(date.fromisoformat(ds))
+                            mid_wday = week_weekday_count[mid.id][d1_wk]
+                            mid_weekend = week_oncall_count[mid.id][d1_wk] - mid_wday
+                            mid_cap = 1 if mid_weekend > 0 else 2
+                            if mid_wday >= mid_cap:
+                                continue
                             d1_idx, d1_ds = idx, ds
                             break
                         if d1_idx is None:
                             continue
-                        # Find D2: mid's weekday (≠ D1) that tgt can take
+                        # Find D2: mid's weekday (≠ D1) that tgt can take (respecting tgt's weekly cap)
                         d2_idx, d2_ds = None, None
                         for idx, e in enumerate(entries):
                             if e["entry_type"] != "oncall" or e["doctor_id"] != mid.id:
@@ -738,17 +799,34 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                             ds = e["date_str"]
                             if ds == d1_ds or ds in unavailable[tgt.id]:
                                 continue
+                            # Weekly cap check for tgt receiving D2
+                            d2_wk = israeli_week_key(date.fromisoformat(ds))
+                            tgt_wday = week_weekday_count[tgt.id][d2_wk]
+                            tgt_weekend = week_oncall_count[tgt.id][d2_wk] - tgt_wday
+                            tgt_cap = 1 if tgt_weekend > 0 else 2
+                            if tgt_wday >= tgt_cap:
+                                continue
                             d2_idx, d2_ds = idx, ds
                             break
                         if d2_idx is None:
                             continue
-                        # Execute 2-hop
+                        # Execute 2-hop, updating all weekly counters
+                        d1_wk = israeli_week_key(date.fromisoformat(d1_ds))
+                        d2_wk = israeli_week_key(date.fromisoformat(d2_ds))
                         entries[d1_idx]["doctor_id"] = mid.id
                         entries[d2_idx]["doctor_id"] = tgt.id
                         month_oncall_count[src.id] -= 1
                         month_oncall_count[tgt.id] += 1
                         total_oncall_count[src.id] -= 1
                         total_oncall_count[tgt.id] += 1
+                        week_weekday_count[src.id][d1_wk] -= 1
+                        week_weekday_count[mid.id][d1_wk] += 1
+                        week_oncall_count[src.id][d1_wk] -= 1
+                        week_oncall_count[mid.id][d1_wk] += 1
+                        week_weekday_count[mid.id][d2_wk] -= 1
+                        week_weekday_count[tgt.id][d2_wk] += 1
+                        week_oncall_count[mid.id][d2_wk] -= 1
+                        week_oncall_count[tgt.id][d2_wk] += 1
                         oncall_assigned[src.id].discard(d1_ds)
                         oncall_assigned[mid.id].add(d1_ds)
                         oncall_assigned[mid.id].discard(d2_ds)
