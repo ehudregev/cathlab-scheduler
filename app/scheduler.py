@@ -368,6 +368,8 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                 for tgt in under_docs:
                     if fri_s in unavailable[tgt.id] or sat_s in unavailable[tgt.id]:
                         continue
+                    fri_wk = israeli_week_key(date.fromisoformat(fri_s))
+                    sat_wk = israeli_week_key(date.fromisoformat(sat_s))
                     entries[fri_idx]["doctor_id"] = tgt.id
                     entries[sat_idx]["doctor_id"] = tgt.id
                     month_oncall_count[src.id] -= 2
@@ -378,6 +380,10 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                     month_weekend_count[tgt.id] += 1
                     weekend_count[src.id] -= 1
                     weekend_count[tgt.id] += 1
+                    week_oncall_count[src.id][fri_wk] -= 1
+                    week_oncall_count[tgt.id][fri_wk] += 1
+                    week_oncall_count[src.id][sat_wk] -= 1
+                    week_oncall_count[tgt.id][sat_wk] += 1
                     oncall_assigned[src.id].discard(fri_s)
                     oncall_assigned[src.id].discard(sat_s)
                     oncall_assigned[tgt.id].update({fri_s, sat_s})
