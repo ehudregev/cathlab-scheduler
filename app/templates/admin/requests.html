@@ -58,10 +58,21 @@
 
   {% if r %}
   <div class="p-4">
+    <!-- Day-of-week headers -->
+    <div class="grid grid-cols-7 gap-1 text-xs text-center text-gray-400 font-semibold mb-1">
+      <div>א׳</div><div>ב׳</div><div>ג׳</div><div>ד׳</div><div>ה׳</div><div>ו׳</div><div>ש׳</div>
+    </div>
     <!-- Calendar grid -->
-    <div class="grid grid-cols-11 gap-1 text-xs text-center">
+    <div class="grid grid-cols-7 gap-1 text-xs text-center">
+      <!-- Blank cells before the 1st -->
+      {% for i in range(first_col_offset) %}
+      <div></div>
+      {% endfor %}
+
       {% for day in days %}
       {% set ds = "%04d-%02d-%02d"|format(year, month, day) %}
+      {% set col = (day - 1 + first_col_offset) % 7 %}
+      {% set is_weekend = col in (5, 6) %}
       {% set state = '' %}
       {% if ds in r.want_session %}{% set state = 'want_session' %}
       {% elif ds in r.want_oncall %}{% set state = 'want_oncall' %}
@@ -78,6 +89,7 @@
         {% elif state == 'no_session' %}bg-yellow-100 border-yellow-400 text-yellow-800
         {% elif state == 'no_oncall' %}bg-red-100 border-red-400 text-red-800
         {% elif state == 'no_both' %}bg-purple-100 border-purple-400 text-purple-800
+        {% elif is_weekend %}bg-gray-100 border-gray-300 text-gray-500
         {% else %}bg-gray-50 border-gray-200 text-gray-400
         {% endif %}">
         {{ day }}

@@ -229,6 +229,14 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
         for i, doc in enumerate(docs_by_history)
     }
 
+    # Every on-call doctor must have at least budget=1 when there are weekends to assign.
+    # Cumulative history should affect priority (sort order), not hard-exclude doctors
+    # from getting any weekend at all in a given month.
+    if num_weekends > 0:
+        for doc in oncall_doctors:
+            if weekend_budget[doc.id] < 1:
+                weekend_budget[doc.id] = 1
+
 
     # Precompute availability per weekend slot
     avail_per_slot = []
@@ -299,8 +307,9 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             entries.append({"date_str": sat_str, "entry_type": "oncall", "doctor_id": None})
             continue
 
-        # Sort: spread across month first, then fairness
+        # Sort: prefer doctors with fewer weekends this month first, then spread
         pool.sort(key=lambda d: (
+            month_weekend_count[d.id],                               # fewest weekends this month first
             -_days_since_last(oncall_assigned[d.id], fri_str),
             month_weekend_count[d.id] / max(weekend_budget[d.id], 1)
             + month_oncall_count[d.id] / max(monthly_budget[d.id], 1),

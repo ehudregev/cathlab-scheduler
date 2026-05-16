@@ -240,7 +240,10 @@ def view_requests(year, month):
     requests = Request.query.filter_by(month=month, year=year).all()
     req_by_doctor = {r.doctor_id: r for r in requests}
     import calendar
-    num_days = calendar.monthrange(year, month)[1]
+    first_weekday, num_days = calendar.monthrange(year, month)
+    # Israeli week starts on Sunday; Python weekday: Mon=0 … Sun=6
+    # Convert: Sun→col0, Mon→col1, …, Sat→col6
+    first_col_offset = (first_weekday + 1) % 7
     days = list(range(1, num_days + 1))
     return render_template(
         "admin/requests.html",
@@ -250,6 +253,7 @@ def view_requests(year, month):
         year=year,
         month_name=MONTH_NAMES[month],
         days=days,
+        first_col_offset=first_col_offset,
     )
 
 
