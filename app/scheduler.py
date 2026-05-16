@@ -609,99 +609,163 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                 break
 
     # ── REBALANCE PASS: enforce max−min ≤ 1 across all doctors ──────────────
-    # The swap pass above only fixes over-budget doctors. If cap-raises created
-    # asymmetry (e.g. one doctor at 7, another at 5), this pass corrects it.
-    # Key improvement: tries ALL over-quota doctors as source, not just max_doc,
-    # so a single unavailable pair doesn't cause the whole pass to abort.
-    for _ in range(len(oncall_doctors) * 10):
+    for _ in range(len(oncall_doctors) * 20):
         if not oncall_doctors:
             break
-        max_doc = max(oncall_doctors, key=lambda d: month_oncall_count[d.id])
-        min_doc = min(oncall_doctors, key=lambda d: month_oncall_count[d.id])
-        if month_oncall_count[max_doc.id] - month_oncall_count[min_doc.id] <= 1:
+        min_count = min(month_oncall_count[d.id] for d in oncall_doctors)
+        max_count = max(month_oncall_count[d.id] for d in oncall_doctors)
+        if max_count - min_count <= 1:
             break
+
+        # Doctors that are over the minimum by more than 1 (sources)
+        src_docs = sorted(
+            [d for d in oncall_doctors if month_oncall_count[d.id] > min_count + 1],
+            key=lambda d: -month_oncall_count[d.id]
+        )
+        # Doctors that are at the minimum (targets)
+        tgt_docs = [d for d in oncall_doctors if month_oncall_count[d.id] == min_count]
 
         swapped = False
 
-        # Try moving a single weekday shift from ANY over-quota doctor to min_doc
-        for src in sorted(oncall_doctors, key=lambda d: -month_oncall_count[d.id]):
-            if month_oncall_count[src.id] <= month_oncall_count[min_doc.id]:
-                break  # no more over-quota sources
-            for idx, entry in enumerate(entries):
-                if entry["entry_type"] != "oncall" or entry["doctor_id"] != src.id:
-                    continue
-                d_obj = date.fromisoformat(entry["date_str"])
-                if d_obj.weekday() in (4, 5):
-                    continue  # handle Fri/Sat as a pair below
-                ds = entry["date_str"]
-                is_sp = ds in holiday_set
-                if ds in unavailable[min_doc.id]:
-                    continue
-                if is_sp and month_weekend_count[min_doc.id] >= weekend_budget[min_doc.id]:
-                    continue
-                entry["doctor_id"] = min_doc.id
-                month_oncall_count[src.id] -= 1
-                month_oncall_count[min_doc.id] += 1
-                total_oncall_count[src.id] -= 1
-                total_oncall_count[min_doc.id] += 1
-                oncall_assigned[src.id].discard(ds)
-                oncall_assigned[min_doc.id].add(ds)
-                if is_sp:
-                    weekend_count[src.id] -= 1
-                    weekend_count[min_doc.id] += 1
-                    month_weekend_count[src.id] -= 1
-                    month_weekend_count[min_doc.id] += 1
-                alerts.append(f"🔄 איזון: {src.name} → {min_doc.name} ({ds})")
-                swapped = True
-                break
+        # ── Attempt 1: direct weekday shift src → tgt ──────────────────────
+        for src in src_docs:
+            for tgt in tgt_docs:
+                for idx, entry in enumerate(entries):
+                    if entry["entry_type"] != "oncall" or entry["doctor_id"] != src.id:
+                        continue
+                    if date.fromisoformat(entry["date_str"]).weekday() in (4, 5):
+                        continue
+                    ds = entry["date_str"]
+                    is_sp = ds in holiday_set
+                    if ds in unavailable[tgt.id]:
+                        continue
+                    if is_sp and month_weekend_count[tgt.id] >= weekend_budget[tgt.id]:
+                        continue
+                    entry["doctor_id"] = tgt.id
+                    month_oncall_count[src.id] -= 1
+                    month_oncall_count[tgt.id] += 1
+                    total_oncall_count[src.id] -= 1
+                    total_oncall_count[tgt.id] += 1
+                    oncall_assigned[src.id].discard(ds)
+                    oncall_assigned[tgt.id].add(ds)
+                    if is_sp:
+                        weekend_count[src.id] -= 1
+                        weekend_count[tgt.id] += 1
+                        month_weekend_count[src.id] -= 1
+                        month_weekend_count[tgt.id] += 1
+                    alerts.append(f"🔄 איזון: {src.name} → {tgt.name} ({ds})")
+                    swapped = True
+                    break
+                if swapped:
+                    break
             if swapped:
                 break
 
+        # ── Attempt 2: direct Fri+Sat pair src → tgt ───────────────────────
         if not swapped:
-            # Try moving a Fri+Sat pair from ANY over-quota doctor to min_doc
-            for src in sorted(oncall_doctors, key=lambda d: -month_oncall_count[d.id]):
-                if month_oncall_count[src.id] <= month_oncall_count[min_doc.id] + 1:
-                    break  # moving 2 days would under-shoot
-                for fri_idx, fri_entry in enumerate(entries):
-                    if (fri_entry["entry_type"] != "oncall"
-                            or fri_entry["doctor_id"] != src.id
-                            or date.fromisoformat(fri_entry["date_str"]).weekday() != 4):
-                        continue
-                    fri_s = fri_entry["date_str"]
-                    sat_s = (date.fromisoformat(fri_s) + timedelta(days=1)).strftime("%Y-%m-%d")
-                    sat_idx = next(
-                        (i for i, e in enumerate(entries)
-                         if e["entry_type"] == "oncall" and e["date_str"] == sat_s), None
-                    )
-                    if sat_idx is None:
-                        continue
-                    if fri_s in unavailable[min_doc.id] or sat_s in unavailable[min_doc.id]:
-                        continue
-                    if month_weekend_count[min_doc.id] >= weekend_budget[min_doc.id]:
-                        continue
-                    entries[fri_idx]["doctor_id"] = min_doc.id
-                    entries[sat_idx]["doctor_id"] = min_doc.id
-                    month_oncall_count[src.id] -= 2
-                    month_oncall_count[min_doc.id] += 2
-                    total_oncall_count[src.id] -= 2
-                    total_oncall_count[min_doc.id] += 2
-                    weekend_count[src.id] -= 1
-                    weekend_count[min_doc.id] += 1
-                    month_weekend_count[src.id] -= 1
-                    month_weekend_count[min_doc.id] += 1
-                    oncall_assigned[src.id].discard(fri_s)
-                    oncall_assigned[src.id].discard(sat_s)
-                    oncall_assigned[min_doc.id].update({fri_s, sat_s})
-                    alerts.append(f"🔄 איזון: {src.name} → {min_doc.name} (סוף שבוע {fri_s})")
-                    swapped = True
+            src_docs2 = [d for d in src_docs if month_oncall_count[d.id] > min_count + 2]
+            for src in src_docs2:
+                for tgt in tgt_docs:
+                    for fri_idx, fri_e in enumerate(entries):
+                        if (fri_e["entry_type"] != "oncall"
+                                or fri_e["doctor_id"] != src.id
+                                or date.fromisoformat(fri_e["date_str"]).weekday() != 4):
+                            continue
+                        fri_s = fri_e["date_str"]
+                        sat_s = (date.fromisoformat(fri_s) + timedelta(days=1)).strftime("%Y-%m-%d")
+                        sat_idx = next(
+                            (i for i, e in enumerate(entries)
+                             if e["entry_type"] == "oncall" and e["date_str"] == sat_s), None
+                        )
+                        if sat_idx is None:
+                            continue
+                        if fri_s in unavailable[tgt.id] or sat_s in unavailable[tgt.id]:
+                            continue
+                        if month_weekend_count[tgt.id] >= weekend_budget[tgt.id]:
+                            continue
+                        entries[fri_idx]["doctor_id"] = tgt.id
+                        entries[sat_idx]["doctor_id"] = tgt.id
+                        month_oncall_count[src.id] -= 2
+                        month_oncall_count[tgt.id] += 2
+                        total_oncall_count[src.id] -= 2
+                        total_oncall_count[tgt.id] += 2
+                        weekend_count[src.id] -= 1
+                        weekend_count[tgt.id] += 1
+                        month_weekend_count[src.id] -= 1
+                        month_weekend_count[tgt.id] += 1
+                        oncall_assigned[src.id].discard(fri_s)
+                        oncall_assigned[src.id].discard(sat_s)
+                        oncall_assigned[tgt.id].update({fri_s, sat_s})
+                        alerts.append(f"🔄 איזון: {src.name} → {tgt.name} (סוף שבוע {fri_s})")
+                        swapped = True
+                        break
+                    if swapped:
+                        break
+                if swapped:
                     break
+
+        # ── Attempt 3: 2-hop  src --(D1)--> mid --(D2)--> tgt ─────────────
+        # Used when tgt is unavailable for all of src's days.
+        # Net effect: src loses D1, mid swaps D2 for D1, tgt gains D2.
+        if not swapped:
+            mid_docs = [d for d in oncall_doctors
+                        if d.id not in {s.id for s in src_docs}
+                        and d.id not in {t.id for t in tgt_docs}]
+            for src in src_docs:
+                for tgt in tgt_docs:
+                    for mid in mid_docs:
+                        # Find D1: src's weekday that mid can take
+                        d1_idx, d1_ds = None, None
+                        for idx, e in enumerate(entries):
+                            if e["entry_type"] != "oncall" or e["doctor_id"] != src.id:
+                                continue
+                            if date.fromisoformat(e["date_str"]).weekday() in (4, 5):
+                                continue
+                            ds = e["date_str"]
+                            if ds in unavailable[mid.id]:
+                                continue
+                            d1_idx, d1_ds = idx, ds
+                            break
+                        if d1_idx is None:
+                            continue
+                        # Find D2: mid's weekday (≠ D1) that tgt can take
+                        d2_idx, d2_ds = None, None
+                        for idx, e in enumerate(entries):
+                            if e["entry_type"] != "oncall" or e["doctor_id"] != mid.id:
+                                continue
+                            if date.fromisoformat(e["date_str"]).weekday() in (4, 5):
+                                continue
+                            ds = e["date_str"]
+                            if ds == d1_ds or ds in unavailable[tgt.id]:
+                                continue
+                            d2_idx, d2_ds = idx, ds
+                            break
+                        if d2_idx is None:
+                            continue
+                        # Execute 2-hop
+                        entries[d1_idx]["doctor_id"] = mid.id
+                        entries[d2_idx]["doctor_id"] = tgt.id
+                        month_oncall_count[src.id] -= 1
+                        month_oncall_count[tgt.id] += 1
+                        total_oncall_count[src.id] -= 1
+                        total_oncall_count[tgt.id] += 1
+                        oncall_assigned[src.id].discard(d1_ds)
+                        oncall_assigned[mid.id].add(d1_ds)
+                        oncall_assigned[mid.id].discard(d2_ds)
+                        oncall_assigned[tgt.id].add(d2_ds)
+                        alerts.append(
+                            f"🔄 איזון 2-שלבי: {src.name}({d1_ds}) → {mid.name} → {tgt.name}({d2_ds})"
+                        )
+                        swapped = True
+                        break
+                    if swapped:
+                        break
                 if swapped:
                     break
 
         if not swapped:
             alerts.append(
-                f"⚠️ לא ניתן לאזן: {max_doc.name}({month_oncall_count[max_doc.id]}) "
-                f"vs {min_doc.name}({month_oncall_count[min_doc.id]})"
+                f"⚠️ לא ניתן לאזן: max={max_count} vs min={min_count} (חסימות זמינות)"
             )
             break
 
