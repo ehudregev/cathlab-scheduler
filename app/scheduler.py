@@ -332,48 +332,65 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
 
     # ── WEEKEND REBALANCE PASS ──────────────────────────────────────────────
     # After initial weekend assignment, enforce max-min for weekends ≤ 1.
-    # This runs before weekday assignment so oncall_assigned is still accurate.
+    # Tries ALL over-assigned doctors × ALL under-assigned doctors × ALL their
+    # weekends, so a single unavailable pair doesn't block the whole pass.
     for _ in range(num_oncall_docs * 3):
-        max_wknd = max(oncall_doctors, key=lambda d: month_weekend_count[d.id])
-        min_wknd = min(oncall_doctors, key=lambda d: month_weekend_count[d.id])
-        if month_weekend_count[max_wknd.id] - month_weekend_count[min_wknd.id] <= 1:
+        min_wknd_count = min(month_weekend_count[d.id] for d in oncall_doctors)
+        max_wknd_count = max(month_weekend_count[d.id] for d in oncall_doctors)
+        if max_wknd_count - min_wknd_count <= 1:
             break
+
+        # All doctors with more weekends than minimum
+        over_docs = [d for d in oncall_doctors
+                     if month_weekend_count[d.id] > min_wknd_count]
+        # All doctors with minimum weekends
+        under_docs = [d for d in oncall_doctors
+                      if month_weekend_count[d.id] == min_wknd_count]
+
         swapped = False
-        for fri_idx, fri_e in enumerate(entries):
-            if (fri_e["entry_type"] != "oncall"
-                    or fri_e["doctor_id"] != max_wknd.id
-                    or date.fromisoformat(fri_e["date_str"]).weekday() != 4):
-                continue
-            fri_s = fri_e["date_str"]
-            sat_s = (date.fromisoformat(fri_s) + timedelta(days=1)).strftime("%Y-%m-%d")
-            sat_idx = next(
-                (i for i, e in enumerate(entries)
-                 if e["entry_type"] == "oncall" and e["date_str"] == sat_s), None
-            )
-            if sat_idx is None:
-                continue
-            if fri_s in unavailable[min_wknd.id] or sat_s in unavailable[min_wknd.id]:
-                continue
-            entries[fri_idx]["doctor_id"] = min_wknd.id
-            entries[sat_idx]["doctor_id"] = min_wknd.id
-            month_oncall_count[max_wknd.id] -= 2
-            month_oncall_count[min_wknd.id] += 2
-            total_oncall_count[max_wknd.id] -= 2
-            total_oncall_count[min_wknd.id] += 2
-            month_weekend_count[max_wknd.id] -= 1
-            month_weekend_count[min_wknd.id] += 1
-            weekend_count[max_wknd.id] -= 1
-            weekend_count[min_wknd.id] += 1
-            oncall_assigned[max_wknd.id].discard(fri_s)
-            oncall_assigned[max_wknd.id].discard(sat_s)
-            oncall_assigned[min_wknd.id].update({fri_s, sat_s})
-            alerts.append(f"🔄 איזון סופ\"ש: {max_wknd.name} → {min_wknd.name} ({fri_s})")
-            swapped = True
-            break
+        for src in over_docs:
+            for fri_idx, fri_e in enumerate(entries):
+                if (fri_e["entry_type"] != "oncall"
+                        or fri_e["doctor_id"] != src.id
+                        or date.fromisoformat(fri_e["date_str"]).weekday() != 4):
+                    continue
+                fri_s = fri_e["date_str"]
+                sat_s = (date.fromisoformat(fri_s) + timedelta(days=1)).strftime("%Y-%m-%d")
+                sat_idx = next(
+                    (i for i, e in enumerate(entries)
+                     if e["entry_type"] == "oncall" and e["date_str"] == sat_s), None
+                )
+                if sat_idx is None:
+                    continue
+                # Try each under-assigned doctor for this specific weekend
+                for tgt in under_docs:
+                    if fri_s in unavailable[tgt.id] or sat_s in unavailable[tgt.id]:
+                        continue
+                    entries[fri_idx]["doctor_id"] = tgt.id
+                    entries[sat_idx]["doctor_id"] = tgt.id
+                    month_oncall_count[src.id] -= 2
+                    month_oncall_count[tgt.id] += 2
+                    total_oncall_count[src.id] -= 2
+                    total_oncall_count[tgt.id] += 2
+                    month_weekend_count[src.id] -= 1
+                    month_weekend_count[tgt.id] += 1
+                    weekend_count[src.id] -= 1
+                    weekend_count[tgt.id] += 1
+                    oncall_assigned[src.id].discard(fri_s)
+                    oncall_assigned[src.id].discard(sat_s)
+                    oncall_assigned[tgt.id].update({fri_s, sat_s})
+                    alerts.append(f"🔄 איזון סופ\"ש: {src.name} → {tgt.name} ({fri_s})")
+                    swapped = True
+                    break
+                if swapped:
+                    break
+            if swapped:
+                break
+
         if not swapped:
             alerts.append(
-                f"⚠️ לא ניתן לאזן סופ\"ש: {max_wknd.name}({month_weekend_count[max_wknd.id]}) "
-                f"vs {min_wknd.name}({month_weekend_count[min_wknd.id]})"
+                f"⚠️ לא ניתן לאזן סופ\"ש: max={max_wknd_count} vs min={min_wknd_count} "
+                f"(חסימות זמינות)"
             )
             break
 
