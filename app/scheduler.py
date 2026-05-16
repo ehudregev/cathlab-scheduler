@@ -408,13 +408,13 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
 
         def _weekly_weekday_ok(doc):
             """Hard weekly rules:
-            - If doctor has weekend on-calls this week → no weekday on-calls.
+            - If doctor has weekend on-calls this week → max 1 weekday on-call.
             - Otherwise max 2 weekday on-calls per week."""
             wday = week_weekday_count[doc.id][week_key]
             weekend_this_week = week_oncall_count[doc.id][week_key] - wday
             if weekend_this_week > 0:
-                return False
-            return wday < 2
+                return wday < 1   # weekend week: at most 1 weekday on-call
+            return wday < 2       # regular week: at most 2 weekday on-calls
 
         # Priority 1: under caps + consecutive < 3 + weekly weekday cap
         pool = [
@@ -441,22 +441,30 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                 and _under_day_cap(doc)
                 and _weekly_weekday_ok(doc)
             ]
-        # Priority 4: relax weekday cap to 3, still exclude weekend-week doctors
+        # Priority 4: relax weekday cap to 3 for non-weekend-week, 2 for weekend-week
         if not pool:
             pool = [
                 doc for doc in oncall_doctors
                 if date_str not in unavailable[doc.id]
                 and _under_day_cap(doc)
-                and (week_oncall_count[doc.id][week_key] - week_weekday_count[doc.id][week_key]) == 0
-                and week_weekday_count[doc.id][week_key] < 3
+                and (
+                    (week_oncall_count[doc.id][week_key] - week_weekday_count[doc.id][week_key] == 0
+                     and week_weekday_count[doc.id][week_key] < 3)
+                    or
+                    (week_oncall_count[doc.id][week_key] - week_weekday_count[doc.id][week_key] > 0
+                     and week_weekday_count[doc.id][week_key] < 2)
+                )
             ]
-        # Priority 5: fully relax weekday cap, still exclude weekend-week doctors
+        # Priority 5: fully relax weekday cap (keep weekend-week at max 2)
         if not pool:
             pool = [
                 doc for doc in oncall_doctors
                 if date_str not in unavailable[doc.id]
                 and _under_day_cap(doc)
-                and (week_oncall_count[doc.id][week_key] - week_weekday_count[doc.id][week_key]) == 0
+                and (
+                    (week_oncall_count[doc.id][week_key] - week_weekday_count[doc.id][week_key] == 0)
+                    or week_weekday_count[doc.id][week_key] < 2
+                )
             ]
         # Priority 6: include weekend-week doctors, relax all weekly caps
         if not pool:
