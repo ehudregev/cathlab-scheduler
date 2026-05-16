@@ -675,46 +675,6 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             if swapped:
                 break
 
-        # Attempt 1b: same but ignore weekly cap (last resort before 2-hop)
-        if not swapped:
-            for src in src_docs:
-                for tgt in tgt_docs:
-                    for idx, entry in enumerate(entries):
-                        if entry["entry_type"] != "oncall" or entry["doctor_id"] != src.id:
-                            continue
-                        if date.fromisoformat(entry["date_str"]).weekday() in (4, 5):
-                            continue
-                        ds = entry["date_str"]
-                        is_sp = ds in holiday_set
-                        if ds in unavailable[tgt.id]:
-                            continue
-                        if is_sp and month_weekend_count[tgt.id] >= weekend_budget[tgt.id]:
-                            continue
-                        d_week_key = israeli_week_key(date.fromisoformat(ds))
-                        entry["doctor_id"] = tgt.id
-                        month_oncall_count[src.id] -= 1
-                        month_oncall_count[tgt.id] += 1
-                        total_oncall_count[src.id] -= 1
-                        total_oncall_count[tgt.id] += 1
-                        week_weekday_count[src.id][d_week_key] -= 1
-                        week_weekday_count[tgt.id][d_week_key] += 1
-                        week_oncall_count[src.id][d_week_key] -= 1
-                        week_oncall_count[tgt.id][d_week_key] += 1
-                        oncall_assigned[src.id].discard(ds)
-                        oncall_assigned[tgt.id].add(ds)
-                        if is_sp:
-                            weekend_count[src.id] -= 1
-                            weekend_count[tgt.id] += 1
-                            month_weekend_count[src.id] -= 1
-                            month_weekend_count[tgt.id] += 1
-                        alerts.append(f"🔄 איזון (ללא מכסה שבועית): {src.name} → {tgt.name} ({ds})")
-                        swapped = True
-                        break
-                    if swapped:
-                        break
-                if swapped:
-                    break
-
         # ── Attempt 2: direct Fri+Sat pair src → tgt ───────────────────────
         if not swapped:
             src_docs2 = [d for d in src_docs if month_oncall_count[d.id] > min_count + 2]
