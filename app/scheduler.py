@@ -192,8 +192,10 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
     month_oncall_count = {d.id: 0 for d in oncall_doctors}
     month_weekend_count = {d.id: 0 for d in oncall_doctors}
 
-    # Weekly on-call tracking — hard cap to prevent clustering in one week
+    # Weekly on-call tracking
     week_oncall_count = defaultdict(lambda: defaultdict(int))
+    # Weekday-only on-call count per week (excludes Fri/Sat weekend on-calls)
+    week_weekday_count = defaultdict(lambda: defaultdict(int))
 
     num_weekends = len(weekend_units)
     num_oncall_docs = len(oncall_doctors)
@@ -404,29 +406,66 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
             return (month_oncall_count[doc.id] < monthly_budget[doc.id]
                     and (not is_special or month_weekend_count[doc.id] < weekend_budget[doc.id]))
 
-        # Priority 1: under caps + won't create a triple (run stays < 3)
+        def _weekly_weekday_ok(doc):
+            """Hard weekly rules:
+            - If doctor has weekend on-calls this week → no weekday on-calls.
+            - Otherwise max 2 weekday on-calls per week."""
+            wday = week_weekday_count[doc.id][week_key]
+            weekend_this_week = week_oncall_count[doc.id][week_key] - wday
+            if weekend_this_week > 0:
+                return False
+            return wday < 2
+
+        # Priority 1: under caps + consecutive < 3 + weekly weekday cap
         pool = [
             doc for doc in oncall_doctors
             if date_str not in unavailable[doc.id]
             and _under_day_cap(doc)
             and _run_after(oncall_assigned[doc.id], {date_str}) < 3
+            and _weekly_weekday_ok(doc)
         ]
-        # Priority 2: under caps + won't create a quadruple (allows triple)
+        # Priority 2: under caps + consecutive < 4 + weekly weekday cap
         if not pool:
             pool = [
                 doc for doc in oncall_doctors
                 if date_str not in unavailable[doc.id]
                 and _under_day_cap(doc)
                 and _run_after(oncall_assigned[doc.id], {date_str}) < 4
+                and _weekly_weekday_ok(doc)
             ]
-        # Priority 3: under caps, fully relax consecutive
+        # Priority 3: under caps + weekly weekday cap (relax consecutive)
+        if not pool:
+            pool = [
+                doc for doc in oncall_doctors
+                if date_str not in unavailable[doc.id]
+                and _under_day_cap(doc)
+                and _weekly_weekday_ok(doc)
+            ]
+        # Priority 4: relax weekday cap to 3, still exclude weekend-week doctors
+        if not pool:
+            pool = [
+                doc for doc in oncall_doctors
+                if date_str not in unavailable[doc.id]
+                and _under_day_cap(doc)
+                and (week_oncall_count[doc.id][week_key] - week_weekday_count[doc.id][week_key]) == 0
+                and week_weekday_count[doc.id][week_key] < 3
+            ]
+        # Priority 5: fully relax weekday cap, still exclude weekend-week doctors
+        if not pool:
+            pool = [
+                doc for doc in oncall_doctors
+                if date_str not in unavailable[doc.id]
+                and _under_day_cap(doc)
+                and (week_oncall_count[doc.id][week_key] - week_weekday_count[doc.id][week_key]) == 0
+            ]
+        # Priority 6: include weekend-week doctors, relax all weekly caps
         if not pool:
             pool = [
                 doc for doc in oncall_doctors
                 if date_str not in unavailable[doc.id]
                 and _under_day_cap(doc)
             ]
-        # Priority 4: raise cap for doctor with fewest cumulative shifts
+        # Priority 7: raise monthly cap for doctor with fewest cumulative shifts
         if not pool:
             avail = [doc for doc in oncall_doctors if date_str not in unavailable[doc.id]]
             if avail:
@@ -458,6 +497,7 @@ def generate_schedule(year, month, db, Doctor, Request, ScheduleEntry, HistoryEn
                 month_weekend_count[assigned.id] += 1
             oncall_assigned[assigned.id].add(date_str)
             week_oncall_count[assigned.id][week_key] += 1
+            week_weekday_count[assigned.id][week_key] += 1
             entries.append({"date_str": date_str, "entry_type": "oncall", "doctor_id": assigned.id})
         else:
             alerts.append(f"לא נמצא כונן זמין ליום {date_str}")
